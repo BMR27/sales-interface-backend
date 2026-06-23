@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  nombre    String
+  email     String   @unique
+  password  String
+  rol       Rol      @default(VENDEDOR)
+  activo    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  leads      Lead[]
+  ventas     Venta[]
+  llamadas   Llamada[]
+
+  @@map("users")
+}
+
+enum Rol {
+  ADMIN
+  VENDEDOR
+}
+
+model Lead {
+  id        Int        @id @default(autoincrement())
+  nombre    String
+  telefono  String
+  producto  String
+  cantidad  Int        @default(1)
+  hora      String?
+  status    LeadStatus @default(NUEVO)
+  folio     String?
+  monto     Float?
+  categoria String?
+  notas     String?
+  vendedorId Int
+  vendedor  User       @relation(fields: [vendedorId], references: [id])
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  llamadas  Llamada[]
+  venta     Venta?
+
+  @@map("leads")
+}
+
+enum LeadStatus {
+  NUEVO
+  SEGUIMIENTO
+  NEGOCIACION
+  VENTA
+  ARCHIVADO
+}
+
+model Venta {
+  id            Int      @id @default(autoincrement())
+  leadId        Int      @unique
+  lead          Lead     @relation(fields: [leadId], references: [id])
+  vendedorId    Int
+  vendedor      User     @relation(fields: [vendedorId], references: [id])
+  monto         Float
+  comision      Float
+  folio         String?
+  entregaExitosa Boolean @default(false)
+  fecha         DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@map("ventas")
+}
+
+model Llamada {
+  id         Int      @id @default(autoincrement())
+  leadId     Int
+  lead       Lead     @relation(fields: [leadId], references: [id])
+  vendedorId Int
+  vendedor   User     @relation(fields: [vendedorId], references: [id])
+  duracion   Int?
+  ofertas    String[]
+  resultado  String?
+  notas      String?
+  fecha      DateTime @default(now())
+
+  @@map("llamadas")
+}
