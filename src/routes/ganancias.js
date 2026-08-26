@@ -58,17 +58,57 @@ router.post("/venta", authMiddleware, async (req, res) => {
       return res.status(400).json({ error: "leadId y monto requeridos" });
     }
 
+    const lead = await prisma.lead.findFirst({ where: { id: leadId, vendedorId: req.user.id } });
+    if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
+
+    const ventaExistente = await prisma.venta.findUnique({ where: { leadId } });
+    if (ventaExistente) {
+      return res.status(409).json({ error: "Este lead ya tiene una venta registrada" });
+    }
+
     const comisionPorcentaje = 15;
     const comision = monto * (comisionPorcentaje / 100);
 
-    const venta = await prisma.venta.create({
-      data: { leadId, vendedorId: req.user.id, monto, comision, folio, entregaExitosa: entregaExitosa || false },
+    let venta = await prisma.venta.create({
+      data: {
+        leadId, vendedorId: req.user.id, monto, comision,
+        folio: folio || null, entregaExitosa: entregaExitosa || false,
+        tenantId: req.user.tenantId,
+      },
     });
+
+    let finalFolio = folio;
+    if (!finalFolio) {
+      finalFolio = `PS${new Date().getFullYear()}-${String(venta.id).padStart(5, "0")}`;
+      venta = await prisma.venta.update({ where: { id: venta.id }, data: { folio: finalFolio } });
+    }
 
     await prisma.lead.update({
       where: { id: leadId },
-      data: { status: "VENTA", monto, folio },
+      data: { status: "VENTA", monto, folio: finalFolio },
     });
+
+    if (lead.productoId) {
+      const producto = await prisma.producto.findUnique({ where: { id: lead.productoId } });
+      if (producto) {
+        const cantidad = lead.cantidad || 1;
+        const nuevoStock = producto.stock - cantidad;
+        await prisma.$transaction([
+          prisma.producto.update({ where: { id: producto.id }, data: { stock: nuevoStock } }),
+          prisma.movimientoInventario.create({
+            data: {
+              productoId: producto.id,
+              tipo: "SALIDA",
+              cantidad: -cantidad,
+              stockResultante: nuevoStock,
+              motivo: `Venta #${finalFolio}`,
+              tenantId: req.user.tenantId,
+              ventaId: venta.id,
+            },
+          }),
+        ]);
+      }
+    }
 
     res.status(201).json(venta);
   } catch (err) {

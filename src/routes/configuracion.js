@@ -11,9 +11,16 @@ router.get("/", authMiddleware, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: { id: true, nombre: true, email: true, rol: true, activo: true, createdAt: true },
+      select: {
+        id: true, nombre: true, email: true, rol: true, activo: true, createdAt: true,
+        tenant: { select: { nombreComercial: true, razonSocial: true } },
+      },
     });
-    res.json(user);
+    res.json({
+      ...user,
+      empresa: user.tenant ? (user.tenant.nombreComercial || user.tenant.razonSocial) : null,
+      tenant: undefined,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

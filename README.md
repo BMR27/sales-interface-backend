@@ -7,7 +7,6 @@ API REST para Sales Interface. Construido con Node.js, Express, Prisma y Postgre
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | POST | /api/auth/login | Login de usuario |
-| POST | /api/auth/register | Registro de usuario |
 | GET | /api/dashboard | Métricas del día + leads |
 | GET | /api/leads | Lista de leads |
 | POST | /api/leads | Crear lead |
@@ -19,6 +18,10 @@ API REST para Sales Interface. Construido con Node.js, Express, Prisma y Postgre
 | POST | /api/ganancias/venta | Registrar venta cerrada |
 | GET | /api/configuracion | Perfil del usuario |
 | PUT | /api/configuracion | Actualizar perfil |
+| GET | /api/productos | Catálogo de productos |
+| POST | /api/external/leads | Recepción externa de leads (header `X-API-Key`) |
+| GET/POST | /api/admin/* | Panel de administración (resumen, leads, ventas, vendedores) |
+| GET/POST/DELETE | /api/admin/api-keys | Gestión de API keys |
 | GET | /health | Health check |
 
 ## Variables de entorno
@@ -30,7 +33,9 @@ PORT=3001
 FRONTEND_URL=https://tu-frontend.vercel.app
 ```
 
-## Usuarios de prueba (seed)
+## Usuarios (seed)
 
 - Admin: `admin@sales.com` / `admin123`
-- Vendedor: `juan@sales.com` / `vendedor123`
+- Vendedor: `gabriel@sales.com` / `vendedor123` (Gabriel Mendoza)
+
+El seed también limpia cualquier lead/venta/llamada de prueba y carga el catálogo real de productos (Perfect Self 2026 VW, Fase 1).

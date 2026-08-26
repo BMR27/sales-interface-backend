@@ -9,6 +9,9 @@ function authMiddleware(req, res, next) {
   const token = authHeader.split(" ")[1];
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded.rol !== "SUPER_ADMIN" && !decoded.tenantId) {
+      return res.status(403).json({ error: "Usuario sin espacio asignado" });
+    }
     req.user = decoded;
     next();
   } catch {

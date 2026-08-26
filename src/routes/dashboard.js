@@ -20,7 +20,7 @@ router.get("/", authMiddleware, async (req, res) => {
     ]);
 
     const leads = await prisma.lead.findMany({
-      where: { vendedorId, status: { not: "ARCHIVADO" } },
+      where: { vendedorId, status: { in: ["NUEVO", "SEGUIMIENTO", "NEGOCIACION"] } },
       orderBy: { createdAt: "desc" },
     });
 

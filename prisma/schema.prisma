@@ -17,21 +17,70 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  tenantId Int?
+  tenant   Tenant? @relation("TenantUsers", fields: [tenantId], references: [id])
+
   leads      Lead[]
   ventas     Venta[]
   llamadas   Llamada[]
+  tenantsAprobados Tenant[] @relation("TenantAprobadoPor")
+  apiKeysCreadas   ApiKey[] @relation("ApiKeyCreadaPor")
 
   @@map("users")
 }
 
 enum Rol {
+  SUPER_ADMIN
   ADMIN
   VENDEDOR
+  PROVEEDOR_LEADS
+}
+
+model Tenant {
+  id              Int          @id @default(autoincrement())
+  tipoPersona     TipoPersona
+  razonSocial     String
+  nombreComercial String?
+  emailContacto   String
+  telefono        String?
+  status          TenantStatus @default(PENDIENTE)
+  motivoRechazo   String?
+  aprobadoPorId   Int?
+  aprobadoPor     User?        @relation("TenantAprobadoPor", fields: [aprobadoPorId], references: [id])
+  approvedAt      DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  users         User[]                 @relation("TenantUsers")
+  leads         Lead[]
+  ventas        Venta[]
+  apiKeys       ApiKey[]
+  incomingLeads IncomingLead[]
+  llamadas      Llamada[]
+  productos     Producto[]
+  movimientos   MovimientoInventario[]
+  appSettings   AppSetting[]
+
+  @@map("tenants")
+}
+
+enum TipoPersona {
+  FISICA
+  MORAL
+}
+
+enum TenantStatus {
+  PENDIENTE
+  ACTIVO
+  RECHAZADO
+  SUSPENDIDO
 }
 
 model Lead {
   id        Int        @id @default(autoincrement())
   nombre    String
+  apellido  String?
+  edad      Int?
   telefono  String
   producto  String
   cantidad  Int        @default(1)
@@ -46,9 +95,34 @@ model Lead {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  source              LeadSource @default(MANUAL)
+  country             String?
+  city                String?
+  ip                  String?
+  state               String?
+  zipCode             String?
+  internalSku         String?
+  externalSku         String?
+  shippingStreet      String?
+  shippingNumber      String?
+  shippingReferences  String?
+  colonia             String?
+  municipio           String?
+  lat                 Float?
+  lng                 Float?
+
+  productoId       Int?
+  productoCatalogo Producto? @relation(fields: [productoId], references: [id])
+
+  incomingLead IncomingLead?
+
   llamadas  Llamada[]
   venta     Venta?
 
+  @@index([tenantId, status])
   @@map("leads")
 }
 
@@ -58,6 +132,11 @@ enum LeadStatus {
   NEGOCIACION
   VENTA
   ARCHIVADO
+}
+
+enum LeadSource {
+  MANUAL
+  EXTERNAL_API
 }
 
 model Venta {
@@ -73,7 +152,156 @@ model Venta {
   fecha         DateTime @default(now())
   createdAt     DateTime @default(now())
 
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
   @@map("ventas")
+}
+
+model ApiKey {
+  id         Int      @id @default(autoincrement())
+  label      String
+  keyPrefix  String
+  keyHash    String   @unique
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime?
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  createdByUserId Int?
+  createdByUser   User? @relation("ApiKeyCreadaPor", fields: [createdByUserId], references: [id])
+
+  incomingLeads IncomingLead[]
+
+  @@map("api_keys")
+}
+
+model IncomingLead {
+  id           Int                @id @default(autoincrement())
+  folio        String
+  consumerName String
+  phone        String
+  country      String
+  state        String?
+  zipCode      String?
+  category     String
+  product      String
+  internalSku  String?
+  externalSku  String
+  rawPayload   Json?
+  status       IncomingLeadStatus @default(RECEIVED)
+  errorMessage String?
+
+  apiKeyId Int
+  apiKey   ApiKey @relation(fields: [apiKeyId], references: [id])
+
+  assignedLeadId     Int?  @unique
+  assignedLead       Lead? @relation(fields: [assignedLeadId], references: [id])
+  assignedVendedorId Int?
+
+  createdAt DateTime @default(now())
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("incoming_leads")
+}
+
+enum IncomingLeadStatus {
+  RECEIVED
+  ASSIGNED
+  FAILED
+}
+
+model AppSetting {
+  id       Int     @id @default(autoincrement())
+  tenantId Int?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id])
+  key      String
+  value    String
+
+  @@unique([tenantId, key])
+  @@map("app_settings")
+}
+
+model Producto {
+  id             Int      @id @default(autoincrement())
+  sku            String
+  nombre         String
+  producto       String
+  linea          String?
+  categoria      String?
+  subcategoria   String?
+  presentacion   String?
+  capacidad      String?
+  empaque        String?
+  pvpRetail      Float?
+  pvpLeadsCpa    Float?
+  ofertas        String?
+  ofertasTiers   Json?
+  beneficios     String?
+  activo         Boolean  @default(true)
+  stock          Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  leads       Lead[]
+  movimientos MovimientoInventario[]
+
+  @@unique([tenantId, sku])
+  @@map("productos")
+}
+
+model MovimientoInventario {
+  id               Int      @id @default(autoincrement())
+  productoId       Int
+  producto         Producto @relation(fields: [productoId], references: [id])
+  tipo             MovimientoTipo
+  cantidad         Int
+  stockResultante  Int
+  motivo           String?
+  ventaId          Int?
+  createdAt        DateTime @default(now())
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("movimientos_inventario")
+}
+
+enum MovimientoTipo {
+  ENTRADA
+  SALIDA
+  AJUSTE
+}
+
+model GeocodeCache {
+  id        Int      @id @default(autoincrement())
+  query     String   @unique
+  lat       Float
+  lng       Float
+  createdAt DateTime @default(now())
+
+  @@map("geocode_cache")
+}
+
+model CodigoPostal {
+  id               Int      @id @default(autoincrement())
+  cp               String
+  colonia          String
+  tipoAsentamiento String?
+  municipio        String?
+  estado           String?
+  ciudad           String?
+  createdAt        DateTime @default(now())
+
+  @@unique([cp, colonia])
+  @@index([cp])
+  @@map("codigos_postales")
 }
 
 model Llamada {
@@ -87,6 +315,9 @@ model Llamada {
   resultado  String?
   notas      String?
   fecha      DateTime @default(now())
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
 
   @@map("llamadas")
 }

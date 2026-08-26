@@ -10,15 +10,23 @@ router.get("/:id", authMiddleware, async (req, res) => {
   try {
     const lead = await prisma.lead.findFirst({
       where: { id: parseInt(req.params.id), vendedorId: req.user.id },
+      include: { productoCatalogo: true },
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
+    if (lead.status === "VENTA") {
+      return res.status(409).json({ error: "Este lead ya tiene una venta cerrada" });
+    }
 
-    const ofertas = [
-      { id: 1, titulo: "Cobertura Premium", descripcion: "Mayor protección y beneficios adicionales", descuento: 30 },
-      { id: 2, titulo: "Asistencia Vial", descripcion: "Auxilio en carretera y emergencias 24/7", descuento: 30 },
-    ];
+    const producto = lead.productoCatalogo;
+    const promociones = producto?.ofertasTiers || [];
 
-    res.json({ lead, ofertas });
+    res.json({
+      lead,
+      producto: producto
+        ? { id: producto.id, nombre: producto.nombre, ofertasTexto: producto.ofertas, beneficios: producto.beneficios }
+        : null,
+      promociones,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
@@ -29,22 +37,36 @@ router.get("/:id", authMiddleware, async (req, res) => {
 router.post("/:id/confirmar", authMiddleware, async (req, res) => {
   try {
     const leadId = parseInt(req.params.id);
-    const { duracion, ofertas, resultado, notas, aceptoOferta } = req.body;
+    const { duracion, resultado, notas, aceptoOferta, cantidadSeleccionada, montoSeleccionado } = req.body;
 
     const lead = await prisma.lead.findFirst({
       where: { id: leadId, vendedorId: req.user.id },
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
+    if (lead.status === "VENTA") {
+      return res.status(409).json({ error: "Este lead ya tiene una venta cerrada" });
+    }
+
+    const ofertas = aceptoOferta && cantidadSeleccionada && montoSeleccionado
+      ? [`${cantidadSeleccionada}x - $${montoSeleccionado}`]
+      : [];
 
     await prisma.llamada.create({
-      data: { leadId, vendedorId: req.user.id, duracion, ofertas: ofertas || [], resultado, notas },
+      data: { leadId, vendedorId: req.user.id, duracion, ofertas, resultado, notas, tenantId: req.user.tenantId },
     });
 
     if (aceptoOferta) {
-      await prisma.lead.update({ where: { id: leadId }, data: { status: "NEGOCIACION" } });
+      await prisma.lead.update({
+        where: { id: leadId },
+        data: { status: "NEGOCIACION", cantidad: cantidadSeleccionada || lead.cantidad },
+      });
     }
 
-    res.json({ message: "Llamada registrada", leadId, redirectTo: `/envio?leadId=${leadId}` });
+    const query = aceptoOferta && montoSeleccionado
+      ? `?leadId=${leadId}&monto=${montoSeleccionado}&cantidad=${cantidadSeleccionada}`
+      : `?leadId=${leadId}`;
+
+    res.json({ message: "Llamada registrada", leadId, redirectTo: `/envio${query}` });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

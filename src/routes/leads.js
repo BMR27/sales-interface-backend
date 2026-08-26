@@ -64,13 +64,20 @@ router.get("/:id", authMiddleware, async (req, res) => {
 // POST /api/leads
 router.post("/", authMiddleware, async (req, res) => {
   try {
-    const { nombre, telefono, producto, cantidad, hora, categoria, notas } = req.body;
+    const { nombre, apellido, edad, telefono, producto, cantidad, hora, categoria, notas, productoId, country, city, ip } = req.body;
     if (!nombre || !telefono || !producto) {
       return res.status(400).json({ error: "Nombre, teléfono y producto requeridos" });
     }
 
     const lead = await prisma.lead.create({
-      data: { nombre, telefono, producto, cantidad: cantidad || 1, hora, categoria, notas, vendedorId: req.user.id },
+      data: {
+        nombre, apellido: apellido || null, edad: edad ? Number(edad) : null,
+        telefono, producto, cantidad: cantidad || 1, hora, categoria, notas,
+        country: country || null, city: city || null, ip: ip || null,
+        productoId: productoId || null,
+        vendedorId: req.user.id,
+        tenantId: req.user.tenantId,
+      },
     });
     res.status(201).json(lead);
   } catch (err) {
@@ -86,10 +93,16 @@ router.put("/:id", authMiddleware, async (req, res) => {
     const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
 
-    const { nombre, telefono, producto, cantidad, hora, status, folio, monto, categoria, notas } = req.body;
+    const {
+      nombre, telefono, producto, cantidad, hora, status, folio, monto, categoria, notas,
+      shippingStreet, shippingNumber, shippingReferences, zipCode, state, colonia, municipio, lat, lng,
+    } = req.body;
     const lead = await prisma.lead.update({
       where: { id },
-      data: { nombre, telefono, producto, cantidad, hora, status, folio, monto, categoria, notas },
+      data: {
+        nombre, telefono, producto, cantidad, hora, status, folio, monto, categoria, notas,
+        shippingStreet, shippingNumber, shippingReferences, zipCode, state, colonia, municipio, lat, lng,
+      },
     });
     res.json(lead);
   } catch (err) {
