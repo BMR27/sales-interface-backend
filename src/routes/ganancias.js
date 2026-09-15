@@ -88,7 +88,31 @@ router.post("/venta", authMiddleware, async (req, res) => {
       data: { status: "VENTA", monto, folio: finalFolio },
     });
 
-    if (lead.productoId) {
+    const leadItems = await prisma.leadItem.findMany({ where: { leadId } });
+
+    if (leadItems.length > 0) {
+      const ops = [];
+      for (const item of leadItems) {
+        const producto = await prisma.producto.findUnique({ where: { id: item.productoId } });
+        if (!producto) continue;
+        const nuevoStock = producto.stock - item.cantidad;
+        ops.push(
+          prisma.producto.update({ where: { id: producto.id }, data: { stock: nuevoStock } }),
+          prisma.movimientoInventario.create({
+            data: {
+              productoId: producto.id,
+              tipo: "SALIDA",
+              cantidad: -item.cantidad,
+              stockResultante: nuevoStock,
+              motivo: `Venta #${finalFolio}`,
+              tenantId: req.user.tenantId,
+              ventaId: venta.id,
+            },
+          }),
+        );
+      }
+      if (ops.length) await prisma.$transaction(ops);
+    } else if (lead.productoId) {
       const producto = await prisma.producto.findUnique({ where: { id: lead.productoId } });
       if (producto) {
         const cantidad = lead.cantidad || 1;

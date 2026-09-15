@@ -60,6 +60,7 @@ model Tenant {
   productos     Producto[]
   movimientos   MovimientoInventario[]
   appSettings   AppSetting[]
+  leadItems     LeadItem[]
 
   @@map("tenants")
 }
@@ -117,10 +118,13 @@ model Lead {
   productoId       Int?
   productoCatalogo Producto? @relation(fields: [productoId], references: [id])
 
+  fechaReagenda DateTime?
+
   incomingLead IncomingLead?
 
   llamadas  Llamada[]
   venta     Venta?
+  items     LeadItem[]
 
   @@index([tenantId, status])
   @@map("leads")
@@ -130,6 +134,7 @@ enum LeadStatus {
   NUEVO
   SEGUIMIENTO
   NEGOCIACION
+  REAGENDADO
   VENTA
   ARCHIVADO
 }
@@ -251,9 +256,27 @@ model Producto {
 
   leads       Lead[]
   movimientos MovimientoInventario[]
+  leadItems   LeadItem[]
 
   @@unique([tenantId, sku])
   @@map("productos")
+}
+
+model LeadItem {
+  id             Int      @id @default(autoincrement())
+  leadId         Int
+  lead           Lead     @relation(fields: [leadId], references: [id])
+  productoId     Int
+  producto       Producto @relation(fields: [productoId], references: [id])
+  cantidad       Int      @default(1)
+  precioUnitario Float
+  createdAt      DateTime @default(now())
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([leadId])
+  @@map("lead_items")
 }
 
 model MovimientoInventario {
