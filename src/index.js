@@ -17,6 +17,7 @@ const inventarioRoutes = require("./routes/inventario");
 const geocodeRoutes = require("./routes/geocode");
 const superadminRoutes = require("./routes/superadmin");
 const proveedorRoutes = require("./routes/proveedor");
+const coordinadorRoutes = require("./routes/coordinador");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -46,6 +47,7 @@ app.use("/api/codigos-postales", codigosPostalesRoutes);
 app.use("/api/geocode", geocodeRoutes);
 app.use("/api/superadmin", superadminRoutes);
 app.use("/api/proveedor", proveedorRoutes);
+app.use("/api/coordinador", coordinadorRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);

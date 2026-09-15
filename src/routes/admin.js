@@ -344,7 +344,7 @@ router.post("/vendedores", async (req, res) => {
       return res.status(400).json({ error: "Nombre, email y contraseña requeridos" });
     }
     const rolFinal = rol || "VENDEDOR";
-    if (!["ADMIN", "VENDEDOR"].includes(rolFinal)) {
+    if (!["ADMIN", "VENDEDOR", "COORDINADOR"].includes(rolFinal)) {
       return res.status(400).json({ error: "rol inválido" });
     }
 
@@ -367,7 +367,7 @@ router.post("/vendedores", async (req, res) => {
 router.put("/vendedores/:id", async (req, res) => {
   try {
     const { nombre, email, rol, activo } = req.body;
-    if (rol !== undefined && !["ADMIN", "VENDEDOR"].includes(rol)) {
+    if (rol !== undefined && !["ADMIN", "VENDEDOR", "COORDINADOR"].includes(rol)) {
       return res.status(400).json({ error: "rol inválido" });
     }
 
