@@ -27,15 +27,34 @@ function classify(status) {
 router.get("/overview", async (req, res) => {
   try {
     const tenantId = req.user.tenantId;
+    const inicioDia = new Date();
+    inicioDia.setHours(0, 0, 0, 0);
 
-    const [vendedores, grouped] = await Promise.all([
+    const [vendedores, grouped, ventasHoy] = await Promise.all([
       prisma.user.findMany({ where: { rol: "VENDEDOR", tenantId }, select: { id: true, nombre: true } }),
       prisma.lead.groupBy({ by: ["vendedorId", "status"], where: { tenantId }, _count: true }),
+      prisma.venta.groupBy({
+        by: ["vendedorId"],
+        where: { tenantId, fecha: { gte: inicioDia } },
+        _sum: { monto: true, comision: true },
+      }),
     ]);
 
     const porVendedor = {};
     for (const v of vendedores) {
-      porVendedor[v.id] = { id: v.id, nombre: v.nombre, asignados: 0, pendientes: 0, concretadas: 0, rechazadas: 0, reagendadas: 0 };
+      porVendedor[v.id] = {
+        id: v.id, nombre: v.nombre,
+        asignados: 0, pendientes: 0, concretadas: 0, rechazadas: 0, reagendadas: 0,
+        ventasHoy: 0, comisionHoy: 0,
+      };
+    }
+
+    for (const row of ventasHoy) {
+      const bucket = porVendedor[row.vendedorId];
+      if (bucket) {
+        bucket.ventasHoy = row._sum.monto || 0;
+        bucket.comisionHoy = row._sum.comision || 0;
+      }
     }
 
     const totales = { asignados: 0, pendientes: 0, concretadas: 0, rechazadas: 0, reagendadas: 0 };
@@ -82,7 +101,7 @@ router.get("/vendedores", async (req, res) => {
 router.get("/leads", async (req, res) => {
   try {
     const { state, productoId, search } = req.query;
-    const where = { tenantId: req.user.tenantId };
+    const where = { tenantId: req.user.tenantId, asignadoPorCoordinador: false };
     if (state) where.state = state;
     if (productoId) where.productoId = parseInt(productoId);
     if (search) {
@@ -121,7 +140,7 @@ router.post("/leads/asignar", async (req, res) => {
 
     const result = await prisma.lead.updateMany({
       where: { id: { in: leadIds.map(Number) }, tenantId: req.user.tenantId },
-      data: { vendedorId: vendedor.id },
+      data: { vendedorId: vendedor.id, asignadoPorCoordinador: true },
     });
 
     res.json({ message: "Leads asignados", actualizados: result.count });

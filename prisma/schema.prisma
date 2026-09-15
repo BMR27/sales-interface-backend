@@ -120,6 +120,7 @@ model Lead {
   productoCatalogo Producto? @relation(fields: [productoId], references: [id])
 
   fechaReagenda DateTime?
+  asignadoPorCoordinador Boolean @default(false)
 
   incomingLead IncomingLead?
 
