@@ -18,6 +18,7 @@ const geocodeRoutes = require("./routes/geocode");
 const superadminRoutes = require("./routes/superadmin");
 const proveedorRoutes = require("./routes/proveedor");
 const coordinadorRoutes = require("./routes/coordinador");
+const voiceRoutes = require("./routes/voice");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -27,6 +28,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: false })); // Twilio postea los webhooks form-encoded
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -48,6 +50,7 @@ app.use("/api/geocode", geocodeRoutes);
 app.use("/api/superadmin", superadminRoutes);
 app.use("/api/proveedor", proveedorRoutes);
 app.use("/api/coordinador", coordinadorRoutes);
+app.use("/api/voice", voiceRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
