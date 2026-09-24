@@ -17,6 +17,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  tourCompletadoAt DateTime?
+
   tenantId Int?
   tenant   Tenant? @relation("TenantUsers", fields: [tenantId], references: [id])
 

@@ -2,6 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { PrismaClient } = require("@prisma/client");
+const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -67,8 +68,23 @@ router.post("/login", async (req, res) => {
         email: user.email,
         rol: user.rol,
         tenantId: user.tenantId,
+        tourCompletado: !!user.tourCompletadoAt,
       },
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/auth/tour-completado — marca el tour de bienvenida como visto
+router.post("/tour-completado", authMiddleware, async (req, res) => {
+  try {
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { tourCompletadoAt: new Date() },
+    });
+    res.json({ tourCompletado: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
