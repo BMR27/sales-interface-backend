@@ -19,6 +19,8 @@ const superadminRoutes = require("./routes/superadmin");
 const proveedorRoutes = require("./routes/proveedor");
 const coordinadorRoutes = require("./routes/coordinador");
 const voiceRoutes = require("./routes/voice");
+const publicRoutes = require("./routes/public");
+const brandingRoutes = require("./routes/branding");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -42,6 +44,7 @@ app.use("/api/ganancias", gananciasRoutes);
 app.use("/api/configuracion", configuracionRoutes);
 app.use("/api/admin/api-keys", apiKeysRoutes);
 app.use("/api/admin/inventario", inventarioRoutes);
+app.use("/api/admin/branding", brandingRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/external", externalRoutes);
 app.use("/api/productos", productosRoutes);
@@ -51,6 +54,7 @@ app.use("/api/superadmin", superadminRoutes);
 app.use("/api/proveedor", proveedorRoutes);
 app.use("/api/coordinador", coordinadorRoutes);
 app.use("/api/voice", voiceRoutes);
+app.use("/api/public", publicRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);

@@ -54,6 +54,15 @@ model Tenant {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
+  // Branding / white-label por empresa. Todo nullable y opcional: una empresa sin
+  // configurar nada de esto sigue funcionando exactamente igual que antes (fallback
+  // al branding por defecto de la plataforma en el frontend).
+  subdominio           String? @unique
+  dominioPersonalizado String? @unique
+  logoUrl              String?
+  colorPrimario        String?
+  colorSecundario      String?
+
   users         User[]                 @relation("TenantUsers")
   leads         Lead[]
   ventas        Venta[]

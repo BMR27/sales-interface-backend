@@ -70,6 +70,14 @@ router.post("/login", async (req, res) => {
         tenantId: user.tenantId,
         tourCompletado: !!user.tourCompletadoAt,
       },
+      tenant: user.tenant
+        ? {
+            nombre: user.tenant.nombreComercial || user.tenant.razonSocial,
+            logoUrl: user.tenant.logoUrl,
+            colorPrimario: user.tenant.colorPrimario,
+            colorSecundario: user.tenant.colorSecundario,
+          }
+        : null,
     });
   } catch (err) {
     console.error(err);
