@@ -25,8 +25,34 @@ const brandingRoutes = require("./routes/branding");
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// En multi-tenant el frontend se sirve desde varios hosts: el dominio de
+// Railway, el dominio raiz (ej. beyond-goals.com / www) y un subdominio por
+// cada empresa (ej. perfectself.beyond-goals.com). Un solo origin fijo
+// bloqueaba por CORS cualquier request que no viniera exactamente de
+// FRONTEND_URL -- incluido el login -- en cuanto una empresa tenia su propio
+// subdominio.
+function isAllowedOrigin(origin) {
+  if (!origin) return true; // same-origin / curl / server-to-server
+  if (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL) return true;
+  if (process.env.ROOT_DOMAIN) {
+    try {
+      const { hostname } = new URL(origin);
+      if (hostname === process.env.ROOT_DOMAIN || hostname.endsWith(`.${process.env.ROOT_DOMAIN}`)) {
+        return true;
+      }
+    } catch {
+      // origin malformado, lo rechaza abajo
+    }
+  }
+  return false;
+}
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || "*",
+  origin: (origin, callback) => {
+    if (!process.env.FRONTEND_URL && !process.env.ROOT_DOMAIN) return callback(null, true);
+    if (isAllowedOrigin(origin)) return callback(null, true);
+    callback(new Error("Not allowed by CORS"));
+  },
   credentials: true,
 }));
 app.use(express.json());
