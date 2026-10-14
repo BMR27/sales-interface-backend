@@ -31,9 +31,19 @@ const PORT = process.env.PORT || 3001;
 // bloqueaba por CORS cualquier request que no viniera exactamente de
 // FRONTEND_URL -- incluido el login -- en cuanto una empresa tenia su propio
 // subdominio.
+// Orígenes adicionales permitidos (coma-separados) además de FRONTEND_URL y
+// ROOT_DOMAIN -- para frontends standalone que no viven bajo el dominio
+// principal (ej. sales-interface-perfectsales en su propio subdominio de
+// Railway, mientras no tiene dominio propio).
+const EXTRA_ALLOWED_ORIGINS = (process.env.EXTRA_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
 function isAllowedOrigin(origin) {
   if (!origin) return true; // same-origin / curl / server-to-server
   if (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL) return true;
+  if (EXTRA_ALLOWED_ORIGINS.includes(origin)) return true;
   if (process.env.ROOT_DOMAIN) {
     try {
       const { hostname } = new URL(origin);
