@@ -118,6 +118,33 @@ router.put("/tenants/:id/suspender", async (req, res) => {
   }
 });
 
+// PUT /api/superadmin/tenants/:id/facturacion
+router.put("/tenants/:id/facturacion", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { plan, montoMensual, proximoCobro, estadoCobro } = req.body;
+
+    if (estadoCobro !== undefined && !["AL_CORRIENTE", "VENCIDO"].includes(estadoCobro)) {
+      return res.status(400).json({ error: "estadoCobro inválido" });
+    }
+
+    const tenant = await prisma.tenant.findUnique({ where: { id } });
+    if (!tenant) return res.status(404).json({ error: "Espacio no encontrado" });
+
+    const data = {};
+    if (plan !== undefined) data.plan = plan || null;
+    if (montoMensual !== undefined) data.montoMensual = montoMensual === null || montoMensual === "" ? null : Number(montoMensual);
+    if (proximoCobro !== undefined) data.proximoCobro = proximoCobro ? new Date(proximoCobro) : null;
+    if (estadoCobro !== undefined) data.estadoCobro = estadoCobro;
+
+    const actualizado = await prisma.tenant.update({ where: { id }, data });
+    res.json(actualizado);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 // POST /api/superadmin/tenants/:id/impersonate
 router.post("/tenants/:id/impersonate", async (req, res) => {
   try {

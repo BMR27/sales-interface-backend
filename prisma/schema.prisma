@@ -63,6 +63,14 @@ model Tenant {
   colorPrimario        String?
   colorSecundario      String?
 
+  // Plan y estado de cobro, llevado a mano por el superadmin -- no hay
+  // procesador de pagos conectado, es solo para que el superadmin sepa que
+  // tanto cobra cada espacio y si esta al corriente.
+  plan          String?
+  montoMensual  Float?
+  proximoCobro  DateTime?
+  estadoCobro   EstadoCobro @default(AL_CORRIENTE)
+
   users         User[]                 @relation("TenantUsers")
   leads         Lead[]
   ventas        Venta[]
@@ -87,6 +95,11 @@ enum TenantStatus {
   ACTIVO
   RECHAZADO
   SUSPENDIDO
+}
+
+enum EstadoCobro {
+  AL_CORRIENTE
+  VENCIDO
 }
 
 model Lead {
