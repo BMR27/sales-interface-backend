@@ -24,6 +24,7 @@ router.get("/tenants", async (req, res) => {
       where,
       include: {
         users: { where: { rol: "ADMIN" }, select: { id: true, nombre: true, email: true } },
+        aprobadoPor: { select: { id: true, nombre: true, email: true } },
         _count: { select: { users: true } },
       },
       orderBy: { createdAt: "desc" },
