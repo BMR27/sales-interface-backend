@@ -167,13 +167,16 @@ model Lead {
   @@map("leads")
 }
 
+// Ciclo de vida de un lead (ver src/lib/leadStatus.js para etiquetas):
+//   NUEVO      -> Nuevo ingreso: ingresado a sistema
+//   REAGENDADO -> Re-Llamar: el cliente pide llamar otro día
+//   DESCARTADO -> el cliente expresa que no lo quiere
+//   VENTA      -> Concretado: venta aceptada por el cliente
 enum LeadStatus {
   NUEVO
-  SEGUIMIENTO
-  NEGOCIACION
   REAGENDADO
+  DESCARTADO
   VENTA
-  ARCHIVADO
 }
 
 enum LeadSource {

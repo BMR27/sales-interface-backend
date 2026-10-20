@@ -4,6 +4,7 @@ const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { requirePermiso } = require("../lib/permisosCatalog");
 const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
+const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -15,7 +16,13 @@ router.get("/", authMiddleware, async (req, res) => {
     const vendedorId = req.user.id;
 
     const where = { vendedorId };
-    if (status) where.status = status.toUpperCase();
+    if (status) {
+      const parsed = parseLeadStatus(status);
+      if (!parsed) {
+        return res.status(400).json({ error: `status inválido. Valores: ${LEAD_STATUSES.join(", ")}` });
+      }
+      where.status = parsed;
+    }
     if (search) {
       where.OR = [
         { nombre: { contains: search, mode: "insensitive" } },
@@ -100,6 +107,11 @@ router.put("/:id", authMiddleware, async (req, res) => {
       nombre, telefono, producto, cantidad, hora, status, folio, monto, categoria, notas,
       shippingStreet, shippingNumber, shippingReferences, zipCode, state, colonia, municipio, lat, lng,
     } = req.body;
+
+    if (status != null && !parseLeadStatus(status)) {
+      return res.status(400).json({ error: `status inválido. Valores: ${LEAD_STATUSES.join(", ")}` });
+    }
+
     const lead = await prisma.lead.update({
       where: { id },
       data: {
@@ -139,8 +151,8 @@ router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"),
     const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
 
-    await prisma.lead.update({ where: { id }, data: { status: "ARCHIVADO" } });
-    res.json({ message: "Lead archivado" });
+    await prisma.lead.update({ where: { id }, data: { status: "DESCARTADO" } });
+    res.json({ message: "Lead descartado" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

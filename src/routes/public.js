@@ -1,5 +1,6 @@
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
+const { direccionDesdeCoordenadas } = require("../lib/reverseGeocode");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -86,10 +87,30 @@ router.post("/ubicacion/:token", async (req, res) => {
       return res.status(400).json({ error: "lat y lng requeridos" });
     }
 
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: { lat, lng, ubicacionCompartidaAt: new Date() },
-    });
+    const datos = { lat, lng, ubicacionCompartidaAt: new Date() };
+
+    // Rellena la dirección desde las coordenadas para que la orden llegue
+    // completa a FullVector, que rechaza de forma permanente cualquier
+    // dirección incompleta (ver buildOrderPayload en src/lib/fullvector.js).
+    // Solo toca campos vacíos: lo que ya capturó la vendedora manda, porque
+    // se lo preguntó al cliente directamente.
+    try {
+      const dir = await direccionDesdeCoordenadas(lat, lng);
+      if (dir) {
+        if (!lead.shippingStreet && dir.calle) datos.shippingStreet = dir.calle;
+        if (!lead.shippingNumber && dir.numero) datos.shippingNumber = dir.numero;
+        if (!lead.zipCode && dir.cp) datos.zipCode = dir.cp;
+        if (!lead.colonia && dir.colonia) datos.colonia = dir.colonia;
+        if (!lead.municipio && dir.municipio) datos.municipio = dir.municipio;
+        if (!lead.state && dir.estado) datos.state = dir.estado;
+      }
+    } catch (err) {
+      // Nunca se pierde la ubicación por culpa del geocodificador: es el
+      // dato que el cliente ya entregó y lo caro de recuperar.
+      console.error("No se pudo resolver la dirección del lead", lead.id, err.message);
+    }
+
+    await prisma.lead.update({ where: { id: lead.id }, data: datos });
     res.json({ ok: true });
   } catch (err) {
     console.error(err);

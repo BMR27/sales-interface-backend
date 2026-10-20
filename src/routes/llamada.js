@@ -115,9 +115,12 @@ router.post("/:id/confirmar", authMiddleware, requirePermiso("vendedor.leads.con
             tenantId: req.user.tenantId,
           })),
         }),
+        // El estatus no se mueve aquí: el lead sigue siendo un pendiente
+        // hasta que la venta se registre (ahí pasa a VENTA/Concretado) o se
+        // descarte. Solo se guarda lo que el cliente aceptó en el carrito.
         prisma.lead.update({
           where: { id: leadId },
-          data: { status: "NEGOCIACION", monto: montoTotal, cantidad: cantidadTotal },
+          data: { monto: montoTotal, cantidad: cantidadTotal },
         }),
       ]);
     }
