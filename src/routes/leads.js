@@ -124,7 +124,17 @@ router.put("/:id", authMiddleware, async (req, res) => {
     // FAILED por eso (ver src/lib/fullvector.js), se reintenta sola en vez
     // de dejarla atorada -- quien edite el lead no tiene por qué saber que
     // existe una sincronización con FullVector.
-    if (lead.shippingStreet && lead.shippingNumber) {
+    // La lista es la misma que valida buildOrderPayload: si se reintenta
+    // sin todos los campos, el reintento falla igual y solo confunde.
+    const direccionCompleta =
+      lead.shippingStreet &&
+      lead.shippingNumber &&
+      lead.colonia &&
+      lead.municipio &&
+      lead.state &&
+      lead.zipCode &&
+      lead.telefono;
+    if (direccionCompleta) {
       const venta = await prisma.venta.findUnique({ where: { leadId: id } });
       if (venta && venta.fullvectorSyncStatus === "FAILED") {
         await prisma.venta.update({
@@ -150,6 +160,9 @@ router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"),
     const id = parseInt(req.params.id);
     const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
+    if (existing.status === "VENTA") {
+      return res.status(409).json({ error: "Este lead ya tiene una venta cerrada" });
+    }
 
     await prisma.lead.update({ where: { id }, data: { status: "DESCARTADO" } });
     res.json({ message: "Lead descartado" });

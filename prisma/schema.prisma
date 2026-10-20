@@ -22,11 +22,11 @@ model User {
   tenantId Int?
   tenant   Tenant? @relation("TenantUsers", fields: [tenantId], references: [id])
 
-  leads      Lead[]
-  ventas     Venta[]
-  llamadas   Llamada[]
-  tenantsAprobados Tenant[] @relation("TenantAprobadoPor")
-  apiKeysCreadas   ApiKey[] @relation("ApiKeyCreadaPor")
+  leads            Lead[]
+  ventas           Venta[]
+  llamadas         Llamada[]
+  tenantsAprobados Tenant[]  @relation("TenantAprobadoPor")
+  apiKeysCreadas   ApiKey[]  @relation("ApiKeyCreadaPor")
 
   @@map("users")
 }
@@ -66,10 +66,10 @@ model Tenant {
   // Plan y estado de cobro, llevado a mano por el superadmin -- no hay
   // procesador de pagos conectado, es solo para que el superadmin sepa que
   // tanto cobra cada espacio y si esta al corriente.
-  plan          String?
-  montoMensual  Float?
-  proximoCobro  DateTime?
-  estadoCobro   EstadoCobro @default(AL_CORRIENTE)
+  plan         String?
+  montoMensual Float?
+  proximoCobro DateTime?
+  estadoCobro  EstadoCobro @default(AL_CORRIENTE)
 
   users         User[]                 @relation("TenantUsers")
   leads         Lead[]
@@ -104,42 +104,42 @@ enum EstadoCobro {
 }
 
 model Lead {
-  id        Int        @id @default(autoincrement())
-  nombre    String
-  apellido  String?
-  edad      Int?
-  telefono  String
-  producto  String
-  cantidad  Int        @default(1)
-  hora      String?
-  status    LeadStatus @default(NUEVO)
-  folio     String?
-  monto     Float?
-  categoria String?
-  notas     String?
+  id         Int        @id @default(autoincrement())
+  nombre     String
+  apellido   String?
+  edad       Int?
+  telefono   String
+  producto   String
+  cantidad   Int        @default(1)
+  hora       String?
+  status     LeadStatus @default(NUEVO)
+  folio      String?
+  monto      Float?
+  categoria  String?
+  notas      String?
   vendedorId Int
-  vendedor  User       @relation(fields: [vendedorId], references: [id])
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  vendedor   User       @relation(fields: [vendedorId], references: [id])
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
 
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
-  source              LeadSource @default(MANUAL)
-  country             String?
-  city                String?
-  ip                  String?
-  state               String?
-  zipCode             String?
-  internalSku         String?
-  externalSku         String?
-  shippingStreet      String?
-  shippingNumber      String?
-  shippingReferences  String?
-  colonia             String?
-  municipio           String?
-  lat                 Float?
-  lng                 Float?
+  source             LeadSource @default(MANUAL)
+  country            String?
+  city               String?
+  ip                 String?
+  state              String?
+  zipCode            String?
+  internalSku        String?
+  externalSku        String?
+  shippingStreet     String?
+  shippingNumber     String?
+  shippingReferences String?
+  colonia            String?
+  municipio          String?
+  lat                Float?
+  lng                Float?
 
   // Autoriza a un cliente sin sesión a compartir su ubicación desde
   // app/compartir-ubicacion/[token]/page.tsx (ver src/routes/public.js) --
@@ -158,14 +158,14 @@ model Lead {
   productoId       Int?
   productoCatalogo Producto? @relation(fields: [productoId], references: [id])
 
-  fechaReagenda DateTime?
-  asignadoPorCoordinador Boolean @default(false)
+  fechaReagenda          DateTime?
+  asignadoPorCoordinador Boolean   @default(false)
 
   incomingLead IncomingLead?
 
-  llamadas  Llamada[]
-  venta     Venta?
-  items     LeadItem[]
+  llamadas Llamada[]
+  venta    Venta?
+  items    LeadItem[]
 
   @@index([tenantId, status])
   @@map("leads")
@@ -189,22 +189,22 @@ enum LeadSource {
 }
 
 model Venta {
-  id            Int      @id @default(autoincrement())
-  leadId        Int      @unique
-  lead          Lead     @relation(fields: [leadId], references: [id])
-  vendedorId    Int
-  vendedor      User     @relation(fields: [vendedorId], references: [id])
-  monto         Float
-  comision      Float
+  id             Int      @id @default(autoincrement())
+  leadId         Int      @unique
+  lead           Lead     @relation(fields: [leadId], references: [id])
+  vendedorId     Int
+  vendedor       User     @relation(fields: [vendedorId], references: [id])
+  monto          Float
+  comision       Float
   // Costo de envío cobrado al cliente (ver src/lib/shippingCost.js) --
   // separado de `monto` a propósito: la comisión del vendedor se calcula
   // solo sobre el producto, no sobre el flete. Lo que se cobra realmente
   // (y lo que se manda a FullVector como orderValue) es monto+costoEnvio.
-  costoEnvio    Float    @default(0)
-  folio         String?
-  entregaExitosa Boolean @default(false)
-  fecha         DateTime @default(now())
-  createdAt     DateTime @default(now())
+  costoEnvio     Float    @default(0)
+  folio          String?
+  entregaExitosa Boolean  @default(false)
+  fecha          DateTime @default(now())
+  createdAt      DateTime @default(now())
 
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id])
@@ -225,12 +225,12 @@ enum FullvectorSyncStatus {
 }
 
 model ApiKey {
-  id         Int      @id @default(autoincrement())
+  id         Int       @id @default(autoincrement())
   label      String
   keyPrefix  String
-  keyHash    String   @unique
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
+  keyHash    String    @unique
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
 
   tenantId Int
@@ -308,24 +308,24 @@ model RolePermiso {
 }
 
 model Producto {
-  id             Int      @id @default(autoincrement())
-  sku            String
-  nombre         String
-  producto       String
-  linea          String?
-  categoria      String?
-  subcategoria   String?
-  presentacion   String?
-  capacidad      String?
-  empaque        String?
-  pvpRetail      Float?
-  pvpLeadsCpa    Float?
-  ofertas        String?
-  ofertasTiers   Json?
-  beneficios     String?
-  activo         Boolean  @default(true)
-  stock          Int      @default(0)
-  createdAt      DateTime @default(now())
+  id           Int      @id @default(autoincrement())
+  sku          String
+  nombre       String
+  producto     String
+  linea        String?
+  categoria    String?
+  subcategoria String?
+  presentacion String?
+  capacidad    String?
+  empaque      String?
+  pvpRetail    Float?
+  pvpLeadsCpa  Float?
+  ofertas      String?
+  ofertasTiers Json?
+  beneficios   String?
+  activo       Boolean  @default(true)
+  stock        Int      @default(0)
+  createdAt    DateTime @default(now())
 
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id])
@@ -357,15 +357,15 @@ model LeadItem {
 }
 
 model MovimientoInventario {
-  id               Int      @id @default(autoincrement())
-  productoId       Int
-  producto         Producto @relation(fields: [productoId], references: [id])
-  tipo             MovimientoTipo
-  cantidad         Int
-  stockResultante  Int
-  motivo           String?
-  ventaId          Int?
-  createdAt        DateTime @default(now())
+  id              Int            @id @default(autoincrement())
+  productoId      Int
+  producto        Producto       @relation(fields: [productoId], references: [id])
+  tipo            MovimientoTipo
+  cantidad        Int
+  stockResultante Int
+  motivo          String?
+  ventaId         Int?
+  createdAt       DateTime       @default(now())
 
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id])

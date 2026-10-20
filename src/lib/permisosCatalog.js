@@ -10,8 +10,8 @@ const prisma = new PrismaClient();
 const PERMISOS_CATALOG = {
   VENDEDOR: [
     { clave: "vendedor.vista.catalogo", tipo: "modulo", grupo: "Navegacion", label: "Ver Catalogo" },
-    { clave: "vendedor.leads.rechazar", tipo: "accion", grupo: "Leads", label: "Rechazar leads" },
-    { clave: "vendedor.leads.reagendar", tipo: "accion", grupo: "Leads", label: "Reagendar llamadas" },
+    { clave: "vendedor.leads.rechazar", tipo: "accion", grupo: "Leads", label: "Descartar leads" },
+    { clave: "vendedor.leads.reagendar", tipo: "accion", grupo: "Leads", label: "Re-Llamar (reagendar llamadas)" },
     { clave: "vendedor.leads.confirmar_venta", tipo: "accion", grupo: "Leads", label: "Confirmar ventas" },
     { clave: "vendedor.leads.agregar_producto", tipo: "accion", grupo: "Leads", label: "Agregar productos extra al carrito" },
   ],

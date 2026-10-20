@@ -2,6 +2,13 @@ const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const { apiKeyMiddleware } = require("../middleware/apiKey");
 const { getNextVendedor } = require("../lib/assignment");
+const {
+  LEAD_STATUSES,
+  LEAD_STATUS_LABELS,
+  LEAD_STATUS_DESCRIPCIONES,
+  parseLeadStatus,
+  leadStatusLabel,
+} = require("../lib/leadStatus");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -131,31 +138,62 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
   }
 });
 
-function estadoDeLead(incomingLead) {
-  if (incomingLead.status === "FAILED") {
-    return { estado: "cancelado", detalle: incomingLead.errorMessage || "No se pudo asignar" };
-  }
-  if (!incomingLead.assignedLead) {
-    return { estado: "pendiente", detalle: "RECIBIDO" };
-  }
-  const leadStatus = incomingLead.assignedLead.status;
-  if (leadStatus === "VENTA") return { estado: "vendido", detalle: leadStatus };
-  if (leadStatus === "ARCHIVADO") return { estado: "cancelado", detalle: leadStatus };
-  return { estado: "pendiente", detalle: leadStatus };
+// `estado` es la agrupación gruesa que esta API expone desde el principio
+// (vendido | pendiente | cancelado). Se mantiene por compatibilidad con los
+// proveedores que ya la consumen; el estatus real del ciclo del lead va en
+// `status`.
+const ESTADOS_AGRUPADOS = ["vendido", "pendiente", "cancelado"];
+
+function estadoAgrupado(leadStatus) {
+  if (leadStatus === "VENTA") return "vendido";
+  if (leadStatus === "DESCARTADO") return "cancelado";
+  return "pendiente";
 }
 
 function serializeEstado(incomingLead) {
-  const { estado, detalle } = estadoDeLead(incomingLead);
+  const lead = incomingLead.assignedLead;
+
+  // Un lead que nunca se pudo asignar (sin vendedores activos) no tiene
+  // estatus del ciclo: no entró a la operación. Se reporta como cancelado
+  // con el motivo, que es lo que el proveedor necesita saber.
+  if (!lead) {
+    const fallo = incomingLead.status === "FAILED";
+    return {
+      folio: incomingLead.folio,
+      leadId: null,
+      status: null,
+      statusLabel: fallo ? "No asignado" : "Recibido",
+      estado: fallo ? "cancelado" : "pendiente",
+      detalleEstado: fallo ? incomingLead.errorMessage || "No se pudo asignar" : "RECIBIDO",
+      cliente: incomingLead.consumerName,
+      telefono: incomingLead.phone,
+      producto: incomingLead.product,
+      externalSku: incomingLead.externalSku,
+      monto: null,
+      fechaReagenda: null,
+      vendedor: null,
+      recibidoAt: incomingLead.createdAt,
+      actualizadoAt: incomingLead.createdAt,
+    };
+  }
+
   return {
     folio: incomingLead.folio,
-    estado,
-    detalleEstado: detalle,
-    monto: incomingLead.assignedLead?.venta?.monto ?? null,
-    vendedor: incomingLead.assignedLead?.vendedor
-      ? { id: incomingLead.assignedLead.vendedor.id, nombre: incomingLead.assignedLead.vendedor.nombre }
-      : null,
+    leadId: lead.id,
+    status: lead.status,
+    statusLabel: leadStatusLabel(lead.status),
+    estado: estadoAgrupado(lead.status),
+    detalleEstado: lead.status,
+    cliente: lead.nombre,
+    telefono: lead.telefono,
+    producto: lead.producto,
+    externalSku: lead.externalSku ?? incomingLead.externalSku,
+    monto: lead.venta?.monto ?? lead.monto ?? null,
+    // Solo tiene valor cuando el cliente pidió que le llamaran otro día.
+    fechaReagenda: lead.status === "REAGENDADO" ? lead.fechaReagenda : null,
+    vendedor: lead.vendedor ? { id: lead.vendedor.id, nombre: lead.vendedor.nombre } : null,
     recibidoAt: incomingLead.createdAt,
-    actualizadoAt: incomingLead.assignedLead?.updatedAt ?? incomingLead.createdAt,
+    actualizadoAt: lead.updatedAt,
   };
 }
 
@@ -168,7 +206,20 @@ const LEAD_INCLUDE = {
   },
 };
 
-// GET /api/external/leads/:folio — estado de un lead enviado previamente (vendido | pendiente | cancelado)
+// GET /api/external/leads-estatus — catálogo de los estatus del ciclo, para
+// que el proveedor no tenga que hardcodearlos leyendo la documentación.
+router.get("/leads-estatus", apiKeyMiddleware, (req, res) => {
+  res.json({
+    estatus: LEAD_STATUSES.map((status) => ({
+      status,
+      label: LEAD_STATUS_LABELS[status],
+      descripcion: LEAD_STATUS_DESCRIPCIONES[status],
+      estado: estadoAgrupado(status),
+    })),
+  });
+});
+
+// GET /api/external/leads/:folio — estatus de un lead enviado previamente
 router.get("/leads/:folio", apiKeyMiddleware, async (req, res) => {
   try {
     const incomingLead = await prisma.incomingLead.findFirst({
@@ -185,23 +236,76 @@ router.get("/leads/:folio", apiKeyMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/external/leads — lista paginada del estado de los leads enviados con esta API key
+// GET /api/external/leads — lista paginada de los leads enviados con esta
+// API key y el estatus en que va cada uno.
+//
+// Filtros: ?status= (NUEVO | REAGENDADO | DESCARTADO | VENTA),
+// ?estado= (vendido | pendiente | cancelado), ?desde= / ?hasta= (ISO o
+// YYYY-MM-DD, sobre la fecha de recepción), ?limit= y ?skip=.
 router.get("/leads", apiKeyMiddleware, async (req, res) => {
   try {
-    const { estado } = req.query;
+    const { status, estado, desde, hasta } = req.query;
     const take = Math.min(Number(req.query.limit) || 50, 200);
+    const skip = Math.max(Number(req.query.skip) || 0, 0);
 
-    const incomingLeads = await prisma.incomingLead.findMany({
-      where: { apiKeyId: req.apiKey.id },
-      include: LEAD_INCLUDE,
-      orderBy: { createdAt: "desc" },
-      take: take * 3, // margen para poder filtrar por estado derivado en memoria
-    });
+    const where = { apiKeyId: req.apiKey.id };
 
-    let items = incomingLeads.map(serializeEstado);
-    if (estado) items = items.filter((i) => i.estado === estado);
+    if (status) {
+      const parsed = parseLeadStatus(status);
+      if (!parsed) {
+        return res.status(400).json({ error: `status inválido. Valores: ${LEAD_STATUSES.join(", ")}` });
+      }
+      where.assignedLead = { status: parsed };
+    }
 
-    res.json({ leads: items.slice(0, take) });
+    if (estado) {
+      if (!ESTADOS_AGRUPADOS.includes(estado)) {
+        return res.status(400).json({ error: `estado inválido. Valores: ${ESTADOS_AGRUPADOS.join(", ")}` });
+      }
+      // `estado` agrupa, así que se traduce a los estatus que lo componen.
+      // "pendiente" incluye además los leads que todavía no se asignaron
+      // (no tienen lead), de ahí el OR.
+      const incluidos = LEAD_STATUSES.filter((s) => estadoAgrupado(s) === estado);
+      if (estado === "pendiente") {
+        where.OR = [
+          { assignedLead: { status: { in: incluidos } } },
+          { assignedLeadId: null, status: { not: "FAILED" } },
+        ];
+      } else if (estado === "cancelado") {
+        where.OR = [
+          { assignedLead: { status: { in: incluidos } } },
+          { assignedLeadId: null, status: "FAILED" },
+        ];
+      } else {
+        where.assignedLead = { ...(where.assignedLead || {}), status: { in: incluidos } };
+      }
+    }
+
+    const createdAt = {};
+    if (desde) {
+      const d = new Date(desde.length === 10 ? `${desde}T00:00:00` : desde);
+      if (Number.isNaN(d.getTime())) return res.status(400).json({ error: "desde inválido" });
+      createdAt.gte = d;
+    }
+    if (hasta) {
+      const h = new Date(hasta.length === 10 ? `${hasta}T23:59:59` : hasta);
+      if (Number.isNaN(h.getTime())) return res.status(400).json({ error: "hasta inválido" });
+      createdAt.lte = h;
+    }
+    if (Object.keys(createdAt).length > 0) where.createdAt = createdAt;
+
+    const [incomingLeads, total] = await Promise.all([
+      prisma.incomingLead.findMany({
+        where,
+        include: LEAD_INCLUDE,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take,
+      }),
+      prisma.incomingLead.count({ where }),
+    ]);
+
+    res.json({ leads: incomingLeads.map(serializeEstado), total, limit: take, skip });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

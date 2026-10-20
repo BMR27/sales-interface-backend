@@ -7,6 +7,7 @@ const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const { getNextVendedor } = require("../lib/assignment");
 const { parseWorkbookBuffer, validateRow, buildTemplateBuffer } = require("../lib/leadsImport");
+const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -203,7 +204,13 @@ router.get("/leads", async (req, res) => {
   try {
     const { status, vendedorId, search, source } = req.query;
     const where = { tenantId: req.user.tenantId };
-    if (status) where.status = status.toUpperCase();
+    if (status) {
+      const parsed = parseLeadStatus(status);
+      if (!parsed) {
+        return res.status(400).json({ error: `status inválido. Valores: ${LEAD_STATUSES.join(", ")}` });
+      }
+      where.status = parsed;
+    }
     if (vendedorId) where.vendedorId = parseInt(vendedorId);
     if (source) where.source = source.toUpperCase();
     if (search) {

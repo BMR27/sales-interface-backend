@@ -9,10 +9,13 @@ const prisma = new PrismaClient();
 
 router.use(authMiddleware, coordinadorMiddleware);
 
+// Agrupaciones que usa el coordinador en su historial. Con cuatro estatus
+// cada grupo es uno solo, pero se mantiene la forma de lista porque los
+// nombres de grupo son parte del contrato del filtro ?estado=.
 const STATUS_GROUPS = {
-  PENDIENTE: ["NUEVO", "SEGUIMIENTO", "NEGOCIACION"],
+  PENDIENTE: ["NUEVO"],
   CONCRETADA: ["VENTA"],
-  RECHAZADA: ["ARCHIVADO"],
+  RECHAZADA: ["DESCARTADO"],
   REAGENDADA: ["REAGENDADO"],
 };
 
