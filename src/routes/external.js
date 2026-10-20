@@ -2,6 +2,8 @@ const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const { apiKeyMiddleware } = require("../middleware/apiKey");
 const { getNextVendedor } = require("../lib/assignment");
+const { notificarLeadNuevo } = require("../lib/notificaciones");
+const { detallarMovimiento } = require("../lib/auditoria");
 const {
   LEAD_STATUSES,
   LEAD_STATUS_LABELS,
@@ -125,6 +127,14 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       where: { id: incomingLead.id },
       data: { status: "ASSIGNED", assignedLeadId: lead.id, assignedVendedorId: vendedor.id },
     });
+
+    detallarMovimiento(req, {
+      entidadId: lead.id,
+      descripcion: `Lead ${lead.nombre} recibido por API y asignado a ${vendedor.nombre}`,
+      despues: { folio, nombre: lead.nombre, telefono: lead.telefono, producto: lead.producto, vendedor: vendedor.nombre },
+    });
+
+    notificarLeadNuevo(lead, { vendedor, origen: "api_externa" });
 
     res.status(201).json({
       received: true,

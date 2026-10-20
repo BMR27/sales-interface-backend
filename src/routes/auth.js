@@ -4,6 +4,8 @@ const jwt = require("jsonwebtoken");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 
+const { detallarMovimiento, registrar } = require("../lib/auditoria");
+
 const router = express.Router();
 const prisma = new PrismaClient();
 
@@ -22,6 +24,23 @@ router.post("/login", async (req, res) => {
 
     const passwordOk = await bcrypt.compare(password, user.password);
     if (!passwordOk) {
+      // El middleware de auditoría ignora las respuestas con error, pero un
+      // intento fallido es justo lo que un admin necesita ver en el kardex.
+      registrar({
+        tenantId: user.tenantId,
+        userId: user.id,
+        userNombre: user.nombre,
+        userEmail: user.email,
+        userRol: user.rol,
+        accion: "sesion.fallida",
+        entidad: "Sesión",
+        descripcion: "Intento de inicio de sesión con contraseña incorrecta",
+        metodo: "POST",
+        ruta: "/api/auth/login",
+        statusCode: 401,
+        ip: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip,
+        userAgent: req.headers["user-agent"],
+      });
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
@@ -59,6 +78,16 @@ router.post("/login", async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "8h" }
     );
+
+    // Sin esto el login queda en el kardex sin usuario ni empresa (el
+    // middleware corre antes de que exista req.user) y no lo ve nadie.
+    detallarMovimiento(req, {
+      tenantId: user.tenantId,
+      userNombre: user.nombre,
+      userEmail: user.email,
+      descripcion: `${user.nombre} inició sesión`,
+      despues: { rol: user.rol },
+    });
 
     res.json({
       token,

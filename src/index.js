@@ -14,6 +14,7 @@ console.error = (...args) => {
 };
 
 const { requestContextMiddleware } = require("./lib/requestContext");
+const { auditMiddleware } = require("./lib/auditoria");
 const { requestTimingMiddleware } = require("./lib/requestMetrics");
 const monitoreoRoutes = require("./routes/monitoreo");
 const { startMonitoringJob } = require("./jobs/monitoring");
@@ -39,6 +40,8 @@ const coordinadorRoutes = require("./routes/coordinador");
 const voiceRoutes = require("./routes/voice");
 const publicRoutes = require("./routes/public");
 const brandingRoutes = require("./routes/branding");
+const kardexRoutes = require("./routes/kardex");
+const notificacionesRoutes = require("./routes/notificaciones");
 const { startFullvectorRetryJob } = require("./jobs/fullvectorRetry");
 
 const app = express();
@@ -88,6 +91,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false })); // Twilio postea los webhooks form-encoded
 app.use(requestContextMiddleware);
 app.use(requestTimingMiddleware);
+// Kardex: registra todo request que modifica algo (ver src/lib/auditoria.js).
+// Va despues de requestContext para heredar el contexto del request, y antes
+// de las rutas para alcanzar a enganchar el "finish" de cualquiera de ellas.
+app.use(auditMiddleware);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -104,6 +111,8 @@ app.use("/api/admin/inventario", inventarioRoutes);
 app.use("/api/admin/branding", brandingRoutes);
 app.use("/api/admin/roles", rolesRoutes);
 app.use("/api/admin/monitoreo", monitoreoRoutes);
+app.use("/api/admin/kardex", kardexRoutes);
+app.use("/api/admin/notificaciones", notificacionesRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/external", externalRoutes);
 app.use("/api/productos", productosRoutes);

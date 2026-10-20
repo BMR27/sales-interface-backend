@@ -8,6 +8,8 @@ const adminMiddleware = require("../middleware/admin");
 const { getNextVendedor } = require("../lib/assignment");
 const { parseWorkbookBuffer, validateRow, buildTemplateBuffer } = require("../lib/leadsImport");
 const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
+const { notificarLeadsImportados } = require("../lib/notificaciones");
+const { detallarMovimiento } = require("../lib/auditoria");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -132,6 +134,7 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
     }
 
     const resultados = { creados: 0, errores: [] };
+    const leadsCreados = [];
 
     for (const { ref, data } of rows) {
       const error = validateRow(data);
@@ -161,7 +164,7 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
 
       try {
         const edadNum = Number(data.edad);
-        await prisma.lead.create({
+        const creado = await prisma.lead.create({
           data: {
             nombre: String(data.nombre),
             apellido: data.apellido ? String(data.apellido) : null,
@@ -184,10 +187,20 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
           },
         });
         resultados.creados += 1;
+        leadsCreados.push(creado);
       } catch (err) {
         resultados.errores.push({ fila: ref, error: "No se pudo crear el lead" });
       }
     }
+
+    detallarMovimiento(req, {
+      descripcion: `Importó ${resultados.creados} leads en lote`,
+      despues: { creados: resultados.creados, errores: resultados.errores.length },
+    });
+
+    // Un solo correo por carga: un Excel de 500 leads no puede convertirse
+    // en 500 avisos (ver src/lib/notificaciones.js).
+    notificarLeadsImportados(tenantId, leadsCreados, { importadoPor: req.user.nombre || req.user.email });
 
     res.status(201).json(resultados);
   } catch (err) {

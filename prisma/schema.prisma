@@ -82,6 +82,7 @@ model Tenant {
   appSettings   AppSetting[]
   leadItems     LeadItem[]
   rolePermisos  RolePermiso[]
+  auditLogs     AuditLog[]
 
   @@map("tenants")
 }
@@ -456,6 +457,52 @@ model RequestMetric {
   @@unique([windowStart, route, method])
   @@index([windowStart])
   @@map("request_metrics")
+}
+
+// Kardex: bitácora de todo lo que pasa en el sistema (Admin). Se llena sola
+// desde auditMiddleware (ver src/lib/auditoria.js), que registra cada request
+// que modifica algo -- el mismo enfoque del módulo de monitoreo: no hay que
+// acordarse de instrumentar cada ruta nueva.
+//
+// Los datos del usuario se guardan copiados, no por relación: el nombre o el
+// correo pueden cambiar (o el usuario borrarse) y el kardex debe seguir
+// diciendo quién hizo el movimiento con los datos de ese momento.
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  tenantId Int?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id])
+
+  userId     Int?
+  userNombre String?
+  userEmail  String?
+  userRol    String?
+
+  // Qué pasó, en términos del negocio: accion "lead.crear", entidad "Lead".
+  accion      String
+  entidad     String?
+  entidadId   String?
+  descripcion String
+
+  // Estado antes/después y sólo los campos que cambiaron, para poder ver el
+  // detalle de un movimiento sin tener que deducirlo.
+  antes   Json?
+  despues Json?
+  cambios Json?
+
+  // Contexto técnico del movimiento.
+  origen     String  @default("web") // web | api_externa | sistema
+  metodo     String?
+  ruta       String?
+  statusCode Int?
+  ip         String?
+  userAgent  String?
+
+  @@index([tenantId, createdAt])
+  @@index([entidad, entidadId])
+  @@index([userId])
+  @@map("audit_logs")
 }
 
 model MemorySnapshot {

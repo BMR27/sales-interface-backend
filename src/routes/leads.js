@@ -5,6 +5,8 @@ const authMiddleware = require("../middleware/auth");
 const { requirePermiso } = require("../lib/permisosCatalog");
 const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
 const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
+const { notificarLeadNuevo } = require("../lib/notificaciones");
+const { detallarMovimiento } = require("../lib/auditoria");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -89,6 +91,12 @@ router.post("/", authMiddleware, async (req, res) => {
         tenantId: req.user.tenantId,
       },
     });
+    detallarMovimiento(req, { entidadId: lead.id, descripcion: `Creó el lead ${lead.nombre}`, despues: lead });
+
+    // Sin await: el aviso por correo no debe retrasar la respuesta ni tumbar
+    // el alta si el correo falla (ver src/lib/notificaciones.js).
+    notificarLeadNuevo(lead, { vendedor: req.user, origen: "web" });
+
     res.status(201).json(lead);
   } catch (err) {
     console.error(err);
@@ -147,6 +155,13 @@ router.put("/:id", authMiddleware, async (req, res) => {
       }
     }
 
+    detallarMovimiento(req, {
+      entidadId: id,
+      descripcion: `Editó el lead ${lead.nombre}`,
+      antes: existing,
+      despues: lead,
+    });
+
     res.json(lead);
   } catch (err) {
     console.error(err);
@@ -154,7 +169,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
   }
 });
 
-// DELETE /api/leads/:id (archiva)
+// DELETE /api/leads/:id (descarta)
 router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -165,6 +180,14 @@ router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"),
     }
 
     await prisma.lead.update({ where: { id }, data: { status: "DESCARTADO" } });
+
+    detallarMovimiento(req, {
+      entidadId: id,
+      descripcion: `Descartó el lead ${existing.nombre}`,
+      antes: { status: existing.status },
+      despues: { status: "DESCARTADO" },
+    });
+
     res.json({ message: "Lead descartado" });
   } catch (err) {
     console.error(err);
