@@ -1,6 +1,7 @@
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
+const { syncVentaToFullVector } = require("../lib/fullvector");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -53,7 +54,7 @@ router.get("/", authMiddleware, async (req, res) => {
 // POST /api/ganancias/venta — registrar venta cerrada
 router.post("/venta", authMiddleware, async (req, res) => {
   try {
-    const { leadId, monto, folio, entregaExitosa } = req.body;
+    const { leadId, monto, costoEnvio, folio, entregaExitosa } = req.body;
     if (!leadId || !monto) {
       return res.status(400).json({ error: "leadId y monto requeridos" });
     }
@@ -72,6 +73,7 @@ router.post("/venta", authMiddleware, async (req, res) => {
     let venta = await prisma.venta.create({
       data: {
         leadId, vendedorId: req.user.id, monto, comision,
+        costoEnvio: Number(costoEnvio) || 0,
         folio: folio || null, entregaExitosa: entregaExitosa || false,
         tenantId: req.user.tenantId,
       },
@@ -133,6 +135,10 @@ router.post("/venta", authMiddleware, async (req, res) => {
         ]);
       }
     }
+
+    syncVentaToFullVector(venta.id).catch((err) => {
+      console.error("fullvector sync error, venta", venta.id, err);
+    });
 
     res.status(201).json(venta);
   } catch (err) {

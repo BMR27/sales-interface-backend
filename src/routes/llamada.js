@@ -1,6 +1,7 @@
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
+const { requirePermiso } = require("../lib/permisosCatalog");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -41,6 +42,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
         categoria: p.categoria,
         ofertasTexto: p.ofertas,
         beneficios: p.beneficios,
+        pvpLeadsCpa: p.pvpLeadsCpa,
         ofertasTiers: p.ofertasTiers || [],
       })),
     });
@@ -51,7 +53,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
 });
 
 // POST /api/llamada/:id/confirmar — registra resultado de la llamada (carrito de productos)
-router.post("/:id/confirmar", authMiddleware, async (req, res) => {
+router.post("/:id/confirmar", authMiddleware, requirePermiso("vendedor.leads.confirmar_venta"), async (req, res) => {
   try {
     const leadId = parseInt(req.params.id);
     const { duracion, resultado, notas, aceptoOferta, items } = req.body;
@@ -86,7 +88,11 @@ router.post("/:id/confirmar", authMiddleware, async (req, res) => {
 
     const ofertas =
       aceptoOferta && cartItems.length > 0
-        ? cartItems.map((i) => `${i.cantidad}x ${productoNombres[i.productoId] || "Producto"} - $${i.precioUnitario}`)
+        ? cartItems.map((i) =>
+            i.esRegalo
+              ? `${i.cantidad}x ${productoNombres[i.productoId] || "Producto"} - GRATIS (regalo)`
+              : `${i.cantidad}x ${productoNombres[i.productoId] || "Producto"} - $${i.precioUnitario}/u`
+          )
         : [];
 
     await prisma.llamada.create({
@@ -94,7 +100,7 @@ router.post("/:id/confirmar", authMiddleware, async (req, res) => {
     });
 
     if (aceptoOferta && cartItems.length > 0) {
-      const montoTotal = cartItems.reduce((sum, i) => sum + i.precioUnitario, 0);
+      const montoTotal = cartItems.reduce((sum, i) => sum + i.precioUnitario * i.cantidad, 0);
       const cantidadTotal = cartItems.reduce((sum, i) => sum + i.cantidad, 0);
 
       await prisma.$transaction([
@@ -105,6 +111,7 @@ router.post("/:id/confirmar", authMiddleware, async (req, res) => {
             productoId: i.productoId,
             cantidad: i.cantidad,
             precioUnitario: i.precioUnitario,
+            esRegalo: Boolean(i.esRegalo),
             tenantId: req.user.tenantId,
           })),
         }),
@@ -123,7 +130,7 @@ router.post("/:id/confirmar", authMiddleware, async (req, res) => {
 });
 
 // POST /api/llamada/:id/reagendar — reagenda el lead para una fecha futura
-router.post("/:id/reagendar", authMiddleware, async (req, res) => {
+router.post("/:id/reagendar", authMiddleware, requirePermiso("vendedor.leads.reagendar"), async (req, res) => {
   try {
     const leadId = parseInt(req.params.id);
     const { fecha, notas } = req.body;

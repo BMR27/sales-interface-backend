@@ -2,6 +2,22 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 
+// Intercepta todo console.error de la app (sin tocar cada ruta) para
+// alimentar el módulo de monitoreo -- ver src/lib/errorLog.js. Debe
+// registrarse antes de requerir las rutas, que son las que generan los
+// console.error que queremos capturar.
+const { captureError } = require("./lib/errorLog");
+const originalConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  originalConsoleError(...args);
+  captureError(args);
+};
+
+const { requestContextMiddleware } = require("./lib/requestContext");
+const { requestTimingMiddleware } = require("./lib/requestMetrics");
+const monitoreoRoutes = require("./routes/monitoreo");
+const { startMonitoringJob } = require("./jobs/monitoring");
+
 const authRoutes = require("./routes/auth");
 const dashboardRoutes = require("./routes/dashboard");
 const leadsRoutes = require("./routes/leads");
@@ -9,18 +25,21 @@ const llamadaRoutes = require("./routes/llamada");
 const gananciasRoutes = require("./routes/ganancias");
 const configuracionRoutes = require("./routes/configuracion");
 const adminRoutes = require("./routes/admin");
+const rolesRoutes = require("./routes/roles");
 const apiKeysRoutes = require("./routes/apiKeys");
 const externalRoutes = require("./routes/external");
 const productosRoutes = require("./routes/productos");
 const codigosPostalesRoutes = require("./routes/codigosPostales");
 const inventarioRoutes = require("./routes/inventario");
 const geocodeRoutes = require("./routes/geocode");
+const coverageRoutes = require("./routes/coverage");
 const superadminRoutes = require("./routes/superadmin");
 const proveedorRoutes = require("./routes/proveedor");
 const coordinadorRoutes = require("./routes/coordinador");
 const voiceRoutes = require("./routes/voice");
 const publicRoutes = require("./routes/public");
 const brandingRoutes = require("./routes/branding");
+const { startFullvectorRetryJob } = require("./jobs/fullvectorRetry");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -67,6 +86,8 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false })); // Twilio postea los webhooks form-encoded
+app.use(requestContextMiddleware);
+app.use(requestTimingMiddleware);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -81,11 +102,14 @@ app.use("/api/configuracion", configuracionRoutes);
 app.use("/api/admin/api-keys", apiKeysRoutes);
 app.use("/api/admin/inventario", inventarioRoutes);
 app.use("/api/admin/branding", brandingRoutes);
+app.use("/api/admin/roles", rolesRoutes);
+app.use("/api/admin/monitoreo", monitoreoRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/external", externalRoutes);
 app.use("/api/productos", productosRoutes);
 app.use("/api/codigos-postales", codigosPostalesRoutes);
 app.use("/api/geocode", geocodeRoutes);
+app.use("/api/coverage", coverageRoutes);
 app.use("/api/superadmin", superadminRoutes);
 app.use("/api/proveedor", proveedorRoutes);
 app.use("/api/coordinador", coordinadorRoutes);
@@ -99,4 +123,6 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
+  startFullvectorRetryJob();
+  startMonitoringJob();
 });

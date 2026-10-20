@@ -46,4 +46,52 @@ router.get("/branding", async (req, res) => {
   }
 });
 
+const UBICACION_TOKEN_VALIDEZ_MS = 24 * 60 * 60 * 1000;
+
+function leadPorToken(token) {
+  return prisma.lead.findUnique({ where: { ubicacionToken: token } });
+}
+
+function tokenVigente(lead) {
+  if (!lead || !lead.ubicacionSolicitadaAt) return false;
+  return Date.now() - new Date(lead.ubicacionSolicitadaAt).getTime() < UBICACION_TOKEN_VALIDEZ_MS;
+}
+
+// GET /api/public/ubicacion/:token — valida el link que se manda por SMS
+// (ver POST /api/leads/:id/solicitar-ubicacion) antes de mostrar el botón
+// de compartir ubicación. Nunca expone teléfono, dirección ni ningún otro
+// dato del lead -- solo el nombre, para personalizar el saludo.
+router.get("/ubicacion/:token", async (req, res) => {
+  try {
+    const lead = await leadPorToken(req.params.token);
+    if (!lead) return res.json({ valid: false, motivo: "no_encontrado" });
+    if (!tokenVigente(lead)) return res.json({ valid: false, motivo: "expirado" });
+    res.json({ valid: true, nombre: lead.nombre });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/public/ubicacion/:token — guarda la ubicación compartida por
+// el cliente. Sin autenticación: el token es la autorización.
+router.post("/ubicacion/:token", async (req, res) => {
+  try {
+    const lead = await leadPorToken(req.params.token);
+    if (!lead) return res.status(404).json({ error: "Enlace no válido" });
+    if (!tokenVigente(lead)) return res.status(410).json({ error: "Enlace expirado" });
+
+    const { lat, lng } = req.body;
+    if (typeof lat !== "number" || typeof lng !== "number") {
+      return res.status(400).json({ error: "lat y lng requeridos" });
+    }
+
+    await prisma.lead.update({ where: { id: lead.id }, data: { lat, lng } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 module.exports = router;

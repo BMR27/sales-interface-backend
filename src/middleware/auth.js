@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const { setRequestUser } = require("../lib/requestContext");
 
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -13,6 +14,7 @@ function authMiddleware(req, res, next) {
       return res.status(403).json({ error: "Usuario sin espacio asignado" });
     }
     req.user = decoded;
+    setRequestUser(decoded.id, decoded.tenantId ?? null);
     next();
   } catch {
     return res.status(401).json({ error: "Token inválido o expirado" });

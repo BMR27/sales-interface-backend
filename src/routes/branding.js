@@ -35,9 +35,16 @@ router.get("/", async (req, res) => {
   }
 });
 
+// La marca del espacio (logo, colores, dominio) solo la administra Bryan --
+// el resto de los ADMIN del tenant pueden ver la configuracion pero no editarla.
+const EMAIL_ADMIN_MARCA = "bryan.mejia@perfectself.com.mx";
+
 // PUT /api/admin/branding
 router.put("/", async (req, res) => {
   try {
+    if (req.user.email !== EMAIL_ADMIN_MARCA) {
+      return res.status(403).json({ error: "Solo Bryan Mejia puede modificar la marca del espacio" });
+    }
     const { nombreComercial, subdominio, dominioPersonalizado, logoUrl, colorPrimario, colorSecundario } = req.body;
     const data = {};
 

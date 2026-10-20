@@ -208,4 +208,28 @@ router.get("/leads", apiKeyMiddleware, async (req, res) => {
   }
 });
 
+// POST /api/external/entregas — aviso de FullVector cuando una orden se
+// entrega exitosamente (el reverso de la venta que creó esa orden allá).
+// Autenticado por X-API-Key, igual que el resto de /api/external.
+router.post("/entregas", apiKeyMiddleware, async (req, res) => {
+  try {
+    const { folio, status } = req.body || {};
+    if (!folio) return res.status(400).json({ error: "folio requerido" });
+
+    const venta = await prisma.venta.findFirst({
+      where: { folio, tenantId: req.apiKey.tenantId },
+    });
+    if (!venta) return res.status(404).json({ error: "Venta no encontrada para ese folio" });
+
+    if (status === "SUCCESSFUL_DELIVERY") {
+      await prisma.venta.update({ where: { id: venta.id }, data: { entregaExitosa: true } });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 module.exports = router;

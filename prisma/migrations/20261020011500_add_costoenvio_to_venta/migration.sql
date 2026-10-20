@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "ventas" ADD COLUMN "costoEnvio" DOUBLE PRECISION NOT NULL DEFAULT 0;

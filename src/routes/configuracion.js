@@ -2,9 +2,22 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
+const { getPermisosEfectivos } = require("../lib/permisosCatalog");
 
 const router = express.Router();
 const prisma = new PrismaClient();
+
+// GET /api/configuracion/mis-permisos — permisos efectivos del usuario autenticado,
+// usados por el frontend para ocultar modulos/acciones desactivados por su ADMIN.
+router.get("/mis-permisos", authMiddleware, async (req, res) => {
+  try {
+    const permisos = await getPermisosEfectivos(req.user.tenantId, req.user.rol);
+    res.json({ rol: req.user.rol, permisos });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
 
 // GET /api/configuracion
 router.get("/", authMiddleware, async (req, res) => {

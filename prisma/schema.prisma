@@ -81,6 +81,7 @@ model Tenant {
   movimientos   MovimientoInventario[]
   appSettings   AppSetting[]
   leadItems     LeadItem[]
+  rolePermisos  RolePermiso[]
 
   @@map("tenants")
 }
@@ -140,6 +141,12 @@ model Lead {
   lat                 Float?
   lng                 Float?
 
+  // Autoriza a un cliente sin sesión a compartir su ubicación desde
+  // app/compartir-ubicacion/[token]/page.tsx (ver src/routes/public.js) --
+  // el token es la única autorización, válido 24h desde que se generó.
+  ubicacionToken        String?   @unique
+  ubicacionSolicitadaAt DateTime?
+
   productoId       Int?
   productoCatalogo Producto? @relation(fields: [productoId], references: [id])
 
@@ -178,6 +185,11 @@ model Venta {
   vendedor      User     @relation(fields: [vendedorId], references: [id])
   monto         Float
   comision      Float
+  // Costo de envío cobrado al cliente (ver src/lib/shippingCost.js) --
+  // separado de `monto` a propósito: la comisión del vendedor se calcula
+  // solo sobre el producto, no sobre el flete. Lo que se cobra realmente
+  // (y lo que se manda a FullVector como orderValue) es monto+costoEnvio.
+  costoEnvio    Float    @default(0)
   folio         String?
   entregaExitosa Boolean @default(false)
   fecha         DateTime @default(now())
@@ -186,7 +198,19 @@ model Venta {
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
+  fullvectorSyncStatus FullvectorSyncStatus @default(PENDING)
+  fullvectorOrderId    String?
+  fullvectorError      String?
+  fullvectorAttempts   Int                  @default(0)
+  fullvectorSyncedAt   DateTime?
+
   @@map("ventas")
+}
+
+enum FullvectorSyncStatus {
+  PENDING
+  SYNCED
+  FAILED
 }
 
 model ApiKey {
@@ -257,6 +281,21 @@ model AppSetting {
   @@map("app_settings")
 }
 
+// Permisos granulares por rol dentro de un tenant. La ausencia de una fila
+// para (tenantId, rol, clave) significa "permitido" -- asi no hay que
+// sembrar nada para los tenants que ya existen.
+model RolePermiso {
+  id       Int     @id @default(autoincrement())
+  tenantId Int
+  tenant   Tenant  @relation(fields: [tenantId], references: [id])
+  rol      Rol
+  clave    String
+  activo   Boolean @default(true)
+
+  @@unique([tenantId, rol, clave])
+  @@map("role_permisos")
+}
+
 model Producto {
   id             Int      @id @default(autoincrement())
   sku            String
@@ -296,6 +335,7 @@ model LeadItem {
   producto       Producto @relation(fields: [productoId], references: [id])
   cantidad       Int      @default(1)
   precioUnitario Float
+  esRegalo       Boolean  @default(false)
   createdAt      DateTime @default(now())
 
   tenantId Int
@@ -369,4 +409,53 @@ model Llamada {
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
   @@map("llamadas")
+}
+
+// Módulo de monitoreo (Admin): captura automática vía console.error
+// interceptado (ver src/index.js + src/lib/errorLog.js), sin tocar cada
+// ruta una por una.
+model ErrorLog {
+  id         Int      @id @default(autoincrement())
+  createdAt  DateTime @default(now())
+  method     String?
+  path       String?
+  statusCode Int?
+  message    String
+  stack      String?
+  userId     Int?
+  tenantId   Int?
+
+  @@index([createdAt])
+  @@map("error_logs")
+}
+
+// Latencia agregada en buckets de 5 min (ver src/jobs/monitoring.js) --
+// no se guarda una fila por request, se acumula en memoria y se vacía
+// periódicamente.
+model RequestMetric {
+  id              Int      @id @default(autoincrement())
+  windowStart     DateTime
+  route           String
+  method          String
+  count           Int      @default(0)
+  totalDurationMs Int      @default(0)
+  maxDurationMs   Int      @default(0)
+  errorCount      Int      @default(0)
+
+  @@unique([windowStart, route, method])
+  @@index([windowStart])
+  @@map("request_metrics")
+}
+
+model MemorySnapshot {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  rssMb       Float
+  heapUsedMb  Float
+  heapTotalMb Float
+  freeMemMb   Float
+  loadAvg1    Float
+
+  @@index([createdAt])
+  @@map("memory_snapshots")
 }

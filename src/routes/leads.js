@@ -1,6 +1,9 @@
 const express = require("express");
+const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
+const { requirePermiso } = require("../lib/permisosCatalog");
+const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -104,6 +107,24 @@ router.put("/:id", authMiddleware, async (req, res) => {
         shippingStreet, shippingNumber, shippingReferences, zipCode, state, colonia, municipio, lat, lng,
       },
     });
+
+    // Si la dirección de envío quedó completa y la venta se había marcado
+    // FAILED por eso (ver src/lib/fullvector.js), se reintenta sola en vez
+    // de dejarla atorada -- quien edite el lead no tiene por qué saber que
+    // existe una sincronización con FullVector.
+    if (lead.shippingStreet && lead.shippingNumber) {
+      const venta = await prisma.venta.findUnique({ where: { leadId: id } });
+      if (venta && venta.fullvectorSyncStatus === "FAILED") {
+        await prisma.venta.update({
+          where: { id: venta.id },
+          data: { fullvectorSyncStatus: "PENDING", fullvectorAttempts: 0, fullvectorError: null },
+        });
+        require("../lib/fullvector").syncVentaToFullVector(venta.id).catch((err) => {
+          console.error("fullvector resync error, venta", venta.id, err);
+        });
+      }
+    }
+
     res.json(lead);
   } catch (err) {
     console.error(err);
@@ -112,7 +133,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
 });
 
 // DELETE /api/leads/:id (archiva)
-router.delete("/:id", authMiddleware, async (req, res) => {
+router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
@@ -123,6 +144,63 @@ router.delete("/:id", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/leads/:id/ticket-sms — manda el ticket de compra (folio, monto)
+// por SMS desde el número de la empresa (no WhatsApp personal, ver
+// src/lib/twilioSms.js).
+router.post("/:id/ticket-sms", authMiddleware, async (req, res) => {
+  try {
+    if (!smsEnabled()) return res.status(503).json({ error: "Envío de SMS no configurado" });
+
+    const id = parseInt(req.params.id);
+    const lead = await prisma.lead.findFirst({
+      where: { id, vendedorId: req.user.id },
+      include: { venta: true },
+    });
+    if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
+    if (!lead.telefono) return res.status(400).json({ error: "El lead no tiene teléfono" });
+    if (!lead.venta) return res.status(400).json({ error: "Este lead aún no tiene una venta registrada" });
+
+    const mensaje = `¡Gracias por tu compra, ${lead.nombre}! Folio: ${lead.folio ?? lead.venta.folio ?? "-"}. Producto: ${lead.producto} (x${lead.cantidad}). Total: $${lead.venta.monto + (lead.venta.costoEnvio || 0)}. En breve recibirás tu pedido.`;
+
+    await sendSms(lead.telefono, mensaje);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al enviar el SMS" });
+  }
+});
+
+// POST /api/leads/:id/solicitar-ubicacion — SMS con link a una página
+// pública (app/compartir-ubicacion/[token]) donde el cliente comparte su
+// ubicación desde el navegador -- reemplaza el wa.me que dependía del
+// WhatsApp personal de la vendedora.
+router.post("/:id/solicitar-ubicacion", authMiddleware, async (req, res) => {
+  try {
+    if (!smsEnabled()) return res.status(503).json({ error: "Envío de SMS no configurado" });
+    if (!process.env.FRONTEND_URL) return res.status(503).json({ error: "FRONTEND_URL no configurado" });
+
+    const id = parseInt(req.params.id);
+    const lead = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
+    if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
+    if (!lead.telefono) return res.status(400).json({ error: "El lead no tiene teléfono" });
+
+    const token = crypto.randomBytes(16).toString("hex");
+    await prisma.lead.update({
+      where: { id },
+      data: { ubicacionToken: token, ubicacionSolicitadaAt: new Date() },
+    });
+
+    const link = `${process.env.FRONTEND_URL}/compartir-ubicacion/${token}`;
+    const mensaje = `Hola ${lead.nombre}, para completar tu entrega compártenos tu ubicación: ${link}`;
+    await sendSms(lead.telefono, mensaje);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al enviar el SMS" });
   }
 });
 
