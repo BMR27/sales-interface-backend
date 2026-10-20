@@ -190,7 +190,9 @@ router.post("/:id/solicitar-ubicacion", authMiddleware, async (req, res) => {
     const token = crypto.randomBytes(16).toString("hex");
     await prisma.lead.update({
       where: { id },
-      data: { ubicacionToken: token, ubicacionSolicitadaAt: new Date() },
+      // ubicacionCompartidaAt se limpia para que una solicitud nueva no
+      // arrastre la respuesta de la anterior y parezca ya contestada.
+      data: { ubicacionToken: token, ubicacionSolicitadaAt: new Date(), ubicacionCompartidaAt: null },
     });
 
     const link = `${process.env.FRONTEND_URL}/compartir-ubicacion/${token}`;

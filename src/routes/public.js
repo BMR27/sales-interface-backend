@@ -86,7 +86,10 @@ router.post("/ubicacion/:token", async (req, res) => {
       return res.status(400).json({ error: "lat y lng requeridos" });
     }
 
-    await prisma.lead.update({ where: { id: lead.id }, data: { lat, lng } });
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { lat, lng, ubicacionCompartidaAt: new Date() },
+    });
     res.json({ ok: true });
   } catch (err) {
     console.error(err);

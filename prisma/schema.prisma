@@ -146,6 +146,10 @@ model Lead {
   // el token es la única autorización, válido 24h desde que se generó.
   ubicacionToken        String?   @unique
   ubicacionSolicitadaAt DateTime?
+  // Se llena solo cuando el cliente comparte desde el link del SMS. Es lo
+  // que distingue esa ubicación del pin que la vendedora coloca a mano o
+  // que sale de geocodificar la dirección escrita.
+  ubicacionCompartidaAt DateTime?
 
   productoId       Int?
   productoCatalogo Producto? @relation(fields: [productoId], references: [id])
