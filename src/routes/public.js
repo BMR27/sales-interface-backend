@@ -103,6 +103,9 @@ router.post("/ubicacion/:token", async (req, res) => {
         if (!lead.colonia && dir.colonia) datos.colonia = dir.colonia;
         if (!lead.municipio && dir.municipio) datos.municipio = dir.municipio;
         if (!lead.state && dir.estado) datos.state = dir.estado;
+        // Texto para que la vendedora lo confirme en la llamada, no para
+        // enviar: el número de la casa más cercana puede no ser el correcto.
+        if (dir.sugerencia) datos.direccionSugerida = dir.sugerencia;
       }
     } catch (err) {
       // Nunca se pierde la ubicación por culpa del geocodificador: es el

@@ -150,6 +150,10 @@ model Lead {
   // que distingue esa ubicación del pin que la vendedora coloca a mano o
   // que sale de geocodificar la dirección escrita.
   ubicacionCompartidaAt DateTime?
+  // Dirección más cercana que conoce HERE al punto compartido, como texto
+  // para que la vendedora la confirme con el cliente. No se usa para
+  // enviar: el número puede ser el del vecino (ver reverseGeocode.js).
+  direccionSugerida     String?
 
   productoId       Int?
   productoCatalogo Producto? @relation(fields: [productoId], references: [id])

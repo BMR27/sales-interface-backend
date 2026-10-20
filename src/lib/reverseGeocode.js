@@ -3,6 +3,7 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
+const HERE_REVERSE_URL = "https://revgeocode.search.hereapi.com/v1/revgeocode";
 const SEPOMEX_URL = "https://sepomex.kurenn.dev/api/v1/zip_codes";
 const USER_AGENT = "VentasCPA-SalesInterface/1.0 (contacto@ventascpa.mx)";
 const TIMEOUT_MS = 6000;
@@ -50,6 +51,37 @@ async function reverseNominatim(lat, lng) {
   };
 }
 
+// HERE cubre mucho mejor las calles mexicanas que OSM (en la prueba de
+// Cuautitlán dio la calle a 29 m donde OSM no tenía ninguna a 60 m), pero
+// sus colonias y CP no cuadran con SEPOMEX: ubica colonias en códigos
+// postales a los que no pertenecen. Por eso solo se le toma la calle y,
+// como texto a confirmar, la dirección numerada más cercana.
+async function reverseHere(lat, lng) {
+  const apiKey = process.env.HERE_API_KEY;
+  if (!apiKey) return null;
+
+  const url = `${HERE_REVERSE_URL}?at=${lat},${lng}&limit=5&lang=es-MX&apiKey=${apiKey}`;
+  const resp = await fetchConTimeout(url);
+  if (!resp.ok) return null;
+
+  const data = await resp.json();
+  const items = data?.items || [];
+  if (items.length === 0) return null;
+
+  const cercano = items[0];
+  const conNumero = items.find((i) => i.resultType === "houseNumber" && i.address?.houseNumber);
+
+  return {
+    calle: cercano.address?.street || null,
+    // Nunca se escribe en shippingNumber: a 29 m de distancia el número
+    // puede ser el del vecino o el de la acera de enfrente, donde además
+    // suele cambiar la paridad. Va como sugerencia para preguntar.
+    sugerencia: conNumero
+      ? `${conNumero.address.street} ${conNumero.address.houseNumber} (a ${Math.round(conNumero.distance)} m)`
+      : null,
+  };
+}
+
 // El catálogo de SEPOMEX manda sobre OSM para colonia/municipio/estado:
 // son los nombres oficiales que espera la paquetería, no los de OSM.
 async function coloniasPorCp(cp) {
@@ -87,19 +119,30 @@ async function coloniasPorCp(cp) {
 // quedan null para que la vendedora los pregunte -- es preferible un hueco
 // visible a un dato inventado que termine en la guía del mensajero.
 async function direccionDesdeCoordenadas(lat, lng) {
-  const osm = await reverseNominatim(lat, lng);
-  if (!osm) return null;
+  // En paralelo y tolerante a fallos: si uno se cae, el otro todavía sirve.
+  const [osmRes, hereRes] = await Promise.allSettled([
+    reverseNominatim(lat, lng),
+    reverseHere(lat, lng),
+  ]);
+  const osm = osmRes.status === "fulfilled" ? osmRes.value : null;
+  const here = hereRes.status === "fulfilled" ? hereRes.value : null;
+  if (hereRes.status === "rejected") {
+    console.error("reverseGeocode: HERE falló:", hereRes.reason?.message);
+  }
+  if (!osm && !here) return null;
 
   const resultado = {
-    calle: osm.calle,
-    numero: osm.numero,
-    cp: osm.cp,
+    // HERE primero: su cobertura de calles en México es muy superior.
+    calle: here?.calle || osm?.calle || null,
+    numero: osm?.numero || null,
+    sugerencia: here?.sugerencia || null,
+    cp: osm?.cp || null,
     colonia: null,
-    municipio: osm.municipio,
-    estado: osm.estado,
+    municipio: osm?.municipio || null,
+    estado: osm?.estado || null,
   };
 
-  if (!osm.cp) return resultado;
+  if (!osm || !osm.cp) return resultado;
 
   const filas = await coloniasPorCp(osm.cp);
   if (filas.length === 0) return resultado;
