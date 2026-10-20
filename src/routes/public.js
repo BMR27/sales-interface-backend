@@ -15,14 +15,21 @@ router.get("/branding", async (req, res) => {
     const host = String(req.query.host || "").toLowerCase().trim();
     if (!host) return res.json({ tenant: null });
 
+    // www.perfectselft.com y perfectselft.com son el mismo sitio, pero el
+    // dominio se guarda tal cual lo escribió el admin: comparar el string
+    // exacto hacía que entrar sin www cayera en { tenant: null } y la pantalla
+    // de login mostrara la marca de la plataforma en vez de la del tenant.
+    const hostSinWww = host.replace(/^www\./, "");
+    const candidatos = [host, hostSinWww, `www.${hostSinWww}`];
+
     let tenant = await prisma.tenant.findFirst({
-      where: { dominioPersonalizado: host, status: "ACTIVO" },
+      where: { dominioPersonalizado: { in: candidatos }, status: "ACTIVO" },
     });
 
     if (!tenant) {
       const rootDomain = String(process.env.ROOT_DOMAIN || "").toLowerCase().trim();
-      if (rootDomain && host.endsWith(`.${rootDomain}`)) {
-        const sub = host.slice(0, -(rootDomain.length + 1));
+      if (rootDomain && hostSinWww.endsWith(`.${rootDomain}`)) {
+        const sub = hostSinWww.slice(0, -(rootDomain.length + 1));
         if (sub && !sub.includes(".")) {
           tenant = await prisma.tenant.findFirst({
             where: { subdominio: sub, status: "ACTIVO" },
