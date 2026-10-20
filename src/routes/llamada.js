@@ -17,9 +17,6 @@ router.get("/:id", authMiddleware, async (req, res) => {
       },
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
-    if (lead.status === "VENTA") {
-      return res.status(409).json({ error: "Este lead ya tiene una venta cerrada" });
-    }
 
     const producto = lead.productoCatalogo;
     const promociones = producto?.ofertasTiers || [];
@@ -31,6 +28,12 @@ router.get("/:id", authMiddleware, async (req, res) => {
 
     res.json({
       lead,
+      // Un lead con venta cerrada se puede consultar pero no volver a
+      // vender: la dirección y la ubicación compartida se siguen
+      // necesitando a la vista para completar el envío. Quien bloquea de
+      // verdad la doble venta es confirmar/reagendar/rechazar, cada uno
+      // con su propia guarda.
+      ventaCerrada: lead.status === "VENTA",
       producto: producto
         ? { id: producto.id, nombre: producto.nombre, ofertasTexto: producto.ofertas, beneficios: producto.beneficios }
         : null,
