@@ -2,6 +2,7 @@ const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
+const { getParametros } = require("../lib/parametros");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -17,7 +18,7 @@ router.get("/", authMiddleware, async (req, res) => {
       prisma.venta.count({ where: { vendedorId, fecha: { gte: hoy } } }),
       prisma.venta.count({ where: { vendedorId, fecha: { gte: hoy }, entregaExitosa: true } }),
       prisma.lead.count({ where: { vendedorId, status: { in: LEAD_STATUSES_ABIERTOS } } }),
-      Promise.resolve(40),
+      getParametros(req.user.tenantId).then((p) => p.metaDiaria),
     ]);
 
     const leads = await prisma.lead.findMany({

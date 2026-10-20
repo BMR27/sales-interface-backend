@@ -42,6 +42,7 @@ const publicRoutes = require("./routes/public");
 const brandingRoutes = require("./routes/branding");
 const kardexRoutes = require("./routes/kardex");
 const notificacionesRoutes = require("./routes/notificaciones");
+const parametrosRoutes = require("./routes/parametros");
 const { startFullvectorRetryJob } = require("./jobs/fullvectorRetry");
 
 const app = express();
@@ -113,6 +114,7 @@ app.use("/api/admin/roles", rolesRoutes);
 app.use("/api/admin/monitoreo", monitoreoRoutes);
 app.use("/api/admin/kardex", kardexRoutes);
 app.use("/api/admin/notificaciones", notificacionesRoutes);
+app.use("/api/admin/parametros", parametrosRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/external", externalRoutes);
 app.use("/api/productos", productosRoutes);

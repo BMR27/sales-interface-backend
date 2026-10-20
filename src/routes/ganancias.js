@@ -2,6 +2,7 @@ const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { syncVentaToFullVector } = require("../lib/fullvector");
+const { getParametros } = require("../lib/parametros");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -28,8 +29,7 @@ router.get("/", authMiddleware, async (req, res) => {
       }),
     ]);
 
-    const comisionPorcentaje = 15;
-    const metaMensual = 120000;
+    const { comisionPorcentaje, metaMensual } = await getParametros(req.user.tenantId);
 
     res.json({
       hoy: { monto: hoy._sum.monto || 0, comision: hoy._sum.comision || 0 },
@@ -67,7 +67,7 @@ router.post("/venta", authMiddleware, async (req, res) => {
       return res.status(409).json({ error: "Este lead ya tiene una venta registrada" });
     }
 
-    const comisionPorcentaje = 15;
+    const { comisionPorcentaje } = await getParametros(req.user.tenantId);
     const comision = monto * (comisionPorcentaje / 100);
 
     let venta = await prisma.venta.create({

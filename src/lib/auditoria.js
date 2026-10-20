@@ -71,6 +71,7 @@ const CATALOGO = [
   ["PUT /api/admin/branding", "branding.editar", "Marca", "Cambió la marca del espacio"],
   ["PUT /api/admin/roles/:rol", "permisos.editar", "Permisos", "Cambió los permisos de un rol"],
   ["PUT /api/admin/notificaciones", "notificaciones.editar", "Notificaciones", "Cambió las notificaciones por correo"],
+  ["PUT /api/admin/parametros", "parametros.editar", "Parámetros", "Cambió los parámetros de operación"],
   ["POST /api/admin/notificaciones/prueba", "notificaciones.prueba", "Notificaciones", "Envió un correo de prueba"],
   ["POST /api/coordinador/leads/asignar", "lead.asignar", "Lead", "Asignó leads a una vendedora"],
   ["PUT /api/configuracion", "perfil.editar", "Perfil", "Editó su perfil"],
