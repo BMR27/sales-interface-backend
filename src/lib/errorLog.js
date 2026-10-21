@@ -33,7 +33,7 @@ function captureError(args) {
     const { err, message } = pickErrorAndMessage(args);
     const entry = { message, stack: err?.stack ? String(err.stack).slice(0, 2000) : null };
     if (!bufferError(entry)) {
-      persist({ ...entry, method: null, path: null, statusCode: null, userId: null, tenantId: null });
+      persist({ ...entry, method: null, path: null, statusCode: null, userId: null, tenantId: null, ip: null, userAgent: null, origin: null });
     }
   } catch {
     // intencional: no-op
@@ -52,6 +52,9 @@ function flushBufferedErrors(statusCode) {
         statusCode,
         userId: ctx?.userId ?? null,
         tenantId: ctx?.tenantId ?? null,
+        ip: ctx?.ip ?? null,
+        userAgent: ctx?.userAgent ? String(ctx.userAgent).slice(0, 300) : null,
+        origin: ctx?.origin ?? null,
       });
     }
   } catch {

@@ -9,8 +9,28 @@ const als = new AsyncLocalStorage();
 // sin escribir a DB todavía -- se vacían en requestTimingMiddleware cuando
 // ya se conoce el statusCode real de la respuesta (ver flushBufferedErrors
 // en errorLog.js).
+function ipDeRequest(req) {
+  const fwd = req.headers["x-forwarded-for"];
+  if (typeof fwd === "string" && fwd.length > 0) return fwd.split(",")[0].trim();
+  return req.ip || req.socket?.remoteAddress || null;
+}
+
 function requestContextMiddleware(req, res, next) {
-  als.run({ method: req.method, path: req.path, userId: null, tenantId: null, errors: [] }, next);
+  als.run(
+    {
+      method: req.method,
+      path: req.originalUrl ? req.originalUrl.split("?")[0] : req.path,
+      userId: null,
+      tenantId: null,
+      // Contexto de quien llamo: sin esto un error solo decia "algo trono",
+      // sin desde donde ni con que cliente.
+      ip: ipDeRequest(req),
+      userAgent: req.headers["user-agent"] || null,
+      origin: req.headers.origin || null,
+      errors: [],
+    },
+    next
+  );
 }
 
 // Las rutas llaman esto tras pasar authMiddleware, cuando ya hay req.user.

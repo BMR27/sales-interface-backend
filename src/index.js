@@ -80,18 +80,25 @@ function isAllowedOrigin(origin) {
   return false;
 }
 
+// El contexto va primero que todo lo demas: un rechazo de CORS ocurre antes
+// que cualquier ruta, y si el contexto se montara despues (como estaba), ese
+// error quedaba en monitoreo sin metodo, ruta ni status -- justo los datos
+// que uno necesita para saber a quien se le rechazo la llamada.
+app.use(requestContextMiddleware);
+app.use(requestTimingMiddleware);
+
 app.use(cors({
   origin: (origin, callback) => {
     if (!process.env.FRONTEND_URL && !process.env.ROOT_DOMAIN) return callback(null, true);
     if (isAllowedOrigin(origin)) return callback(null, true);
-    callback(new Error("Not allowed by CORS"));
+    // El origen rechazado va en el mensaje: sin el, "Not allowed by CORS"
+    // no dice que dominio hay que permitir.
+    callback(new Error(`Not allowed by CORS: origen "${origin || "(sin origin)"}" no esta permitido`));
   },
   credentials: true,
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false })); // Twilio postea los webhooks form-encoded
-app.use(requestContextMiddleware);
-app.use(requestTimingMiddleware);
 // Kardex: registra todo request que modifica algo (ver src/lib/auditoria.js).
 // Va despues de requestContext para heredar el contexto del request, y antes
 // de las rutas para alcanzar a enganchar el "finish" de cualquiera de ellas.

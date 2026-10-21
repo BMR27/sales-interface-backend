@@ -437,6 +437,11 @@ model ErrorLog {
   userId     Int?
   tenantId   Int?
 
+  // Contexto de quien disparo el error (ver src/lib/requestContext.js).
+  ip        String?
+  userAgent String?
+  origin    String?
+
   @@index([createdAt])
   @@map("error_logs")
 }
