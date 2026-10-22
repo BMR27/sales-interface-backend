@@ -164,6 +164,15 @@ model Lead {
   fechaReagenda          DateTime?
   asignadoPorCoordinador Boolean   @default(false)
 
+  // Un lead que la vendedora devuelve a la cola al cerrar su turno porque el
+  // cliente no contesto. Se guarda quien lo devolvio y por que para que la
+  // coordinadora no lo reasigne a la misma persona ni repita el intento a
+  // ciegas. El nombre va desnormalizado a proposito: es un dato historico
+  // de ese momento, no una referencia viva al usuario.
+  devueltoAt        DateTime?
+  devueltoMotivo    String?
+  devueltoPorNombre String?
+
   incomingLead IncomingLead?
 
   llamadas Llamada[]

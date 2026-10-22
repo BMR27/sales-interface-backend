@@ -54,6 +54,7 @@ const CATALOGO = [
   ["POST /api/leads", "lead.crear", "Lead", "Creó un lead"],
   ["PUT /api/leads/:id", "lead.editar", "Lead", "Editó un lead"],
   ["DELETE /api/leads/:id", "lead.descartar", "Lead", "Descartó un lead"],
+  ["POST /api/leads/:id/devolver", "lead.devolver", "Lead", "Devolvió un lead a la cola de asignación"],
   ["POST /api/leads/:id/ticket-sms", "lead.ticket_sms", "Lead", "Envió el ticket por SMS"],
   ["POST /api/leads/:id/solicitar-ubicacion", "lead.solicitar_ubicacion", "Lead", "Pidió la ubicación al cliente por SMS"],
   ["POST /api/llamada/:id/confirmar", "llamada.confirmar", "Llamada", "Registró el resultado de una llamada"],

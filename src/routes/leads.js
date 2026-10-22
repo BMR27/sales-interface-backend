@@ -4,7 +4,7 @@ const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { requirePermiso } = require("../lib/permisosCatalog");
 const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
-const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
+const { LEAD_STATUSES, LEAD_STATUSES_ABIERTOS, parseLeadStatus } = require("../lib/leadStatus");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
 const { detallarMovimiento } = require("../lib/auditoria");
 
@@ -189,6 +189,53 @@ router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"),
     });
 
     res.json({ message: "Lead descartado" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/leads/:id/devolver — la vendedora regresa a la cola un lead que
+// no contesto en su turno, para que la coordinadora lo reasigne a otra
+// persona en vez de que se pierda hasta el dia siguiente.
+router.post("/:id/devolver", authMiddleware, requirePermiso("vendedor.leads.devolver"), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const motivo = typeof req.body?.motivo === "string" ? req.body.motivo.trim().slice(0, 300) : "";
+
+    const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
+    if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
+
+    // Solo se devuelve lo que sigue vivo: una venta cerrada o un descarte ya
+    // no son trabajo pendiente de nadie.
+    if (!LEAD_STATUSES_ABIERTOS.includes(existing.status)) {
+      return res.status(409).json({
+        error:
+          existing.status === "VENTA"
+            ? "Este lead ya tiene una venta cerrada"
+            : "Este lead ya fue descartado",
+      });
+    }
+
+    const lead = await prisma.lead.update({
+      where: { id },
+      data: {
+        vendedorId: null,
+        asignadoPorCoordinador: false,
+        devueltoAt: new Date(),
+        devueltoMotivo: motivo || "No contestó durante el turno",
+        devueltoPorNombre: req.user.nombre,
+      },
+    });
+
+    detallarMovimiento(req, {
+      entidadId: id,
+      descripcion: `Devolvió a la cola el lead ${existing.nombre}`,
+      antes: { vendedor: req.user.nombre, status: existing.status },
+      despues: { vendedor: "sin asignar", motivo: lead.devueltoMotivo },
+    });
+
+    res.json({ message: "Lead devuelto a la cola de asignación", leadId: id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
