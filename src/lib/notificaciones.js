@@ -144,10 +144,95 @@ async function notificarLeadsImportados(tenantId, leads, { importadoPor = null }
   }
 }
 
+// Aviso de una venta que cayó fuera de la cobertura de la mensajería. No
+// comparte el interruptor de `lead_nuevo`: quien atiende los leads nuevos no
+// es necesariamente quien cobra las transferencias, así que tiene su propia
+// configuración y, mientras nadie la toque, hereda los destinatarios de
+// aquélla para que el aviso no se pierda.
+const KEY_COBERTURA_ACTIVO = "notificaciones.venta_sin_cobertura.activo";
+const KEY_COBERTURA_DESTINATARIOS = "notificaciones.venta_sin_cobertura.destinatarios";
+
+async function getConfigSinCobertura(tenantId) {
+  const filas = await prisma.appSetting.findMany({
+    where: { tenantId, key: { in: [KEY_COBERTURA_ACTIVO, KEY_COBERTURA_DESTINATARIOS] } },
+  });
+  const mapa = Object.fromEntries(filas.map((f) => [f.key, f.value]));
+  const guardados = mapa[KEY_COBERTURA_DESTINATARIOS];
+  const heredados = guardados == null ? (await getConfig(tenantId)).destinatarios : null;
+
+  return {
+    activo: mapa[KEY_COBERTURA_ACTIVO] == null ? true : mapa[KEY_COBERTURA_ACTIVO] === "true",
+    destinatarios: guardados != null ? parseDestinatarios(guardados) : heredados,
+    configurado: guardados != null,
+  };
+}
+
+async function setConfigSinCobertura(tenantId, { activo, destinatarios }) {
+  const guardar = async (key, value) => {
+    const existente = await prisma.appSetting.findFirst({ where: { tenantId, key } });
+    if (existente) await prisma.appSetting.update({ where: { id: existente.id }, data: { value } });
+    else await prisma.appSetting.create({ data: { tenantId, key, value } });
+  };
+
+  if (activo !== undefined) await guardar(KEY_COBERTURA_ACTIVO, activo ? "true" : "false");
+  if (destinatarios !== undefined) await guardar(KEY_COBERTURA_DESTINATARIOS, destinatarios.join(", "));
+
+  return getConfigSinCobertura(tenantId);
+}
+
+async function notificarVentaSinCobertura(venta, lead, { vendedor = null } = {}) {
+  try {
+    if (!isEnabled()) return;
+    const config = await getConfigSinCobertura(venta.tenantId);
+    if (!config.activo || config.destinatarios.length === 0) return;
+
+    const direccion = [lead?.shippingStreet, lead?.shippingNumber, lead?.colonia, lead?.municipio, lead?.state, lead?.zipCode]
+      .filter(Boolean)
+      .join(", ");
+    const total = venta.monto + (venta.costoEnvio || 0);
+    const enlace = process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/prepago` : null;
+
+    await sendMail({
+      to: config.destinatarios,
+      subject: `Venta sin cobertura (prepago): ${venta.folio || `#${venta.id}`} — ${lead?.nombre || "cliente"}`,
+      html: `<div style="${ESTILO_BASE};max-width:560px">
+        <h2 style="margin:0 0 4px;font-size:18px">Venta fuera de cobertura: hay que cobrarla por transferencia</h2>
+        <p style="margin:0 0 20px;color:#6b7280;font-size:13px">
+          En el CP ${lead?.zipCode || "(sin CP)"} la mensajería no ofrece pago en efectivo contra entrega.
+          Hay que llamar al cliente, ofrecerle transferencia y, una vez confirmada, enviar por mensajería tradicional.
+        </p>
+        <table style="border-collapse:collapse;width:100%">
+          ${fila("Folio", venta.folio)}
+          ${fila("Cliente", [lead?.nombre, lead?.apellido].filter(Boolean).join(" "))}
+          ${fila("Teléfono", lead?.telefono)}
+          ${fila("Producto", lead?.producto)}
+          ${fila("Dirección", direccion)}
+          ${fila("Total a cobrar", `$${Math.round(total).toLocaleString("es-MX")}`)}
+          ${fila("Vendedora", vendedor ? vendedor.nombre : null)}
+          ${fila("ID en FullVector", venta.fullvectorOrderId)}
+        </table>
+        ${enlace ? `<p style="margin:20px 0 0"><a href="${enlace}" style="font-size:14px">Gestionar en PerfectSelft</a></p>` : ""}
+      </div>`,
+      text: [
+        `Venta fuera de cobertura: ${venta.folio || `#${venta.id}`}`,
+        `Cliente: ${lead?.nombre || ""} (${lead?.telefono || "sin teléfono"})`,
+        `CP ${lead?.zipCode || "?"} sin pago contra entrega: cobrar por transferencia.`,
+        `Total: $${Math.round(total).toLocaleString("es-MX")}`,
+        enlace,
+      ].filter(Boolean).join("\n"),
+    });
+  } catch (err) {
+    console.error("notificarVentaSinCobertura falló para la venta", venta?.id, err);
+  }
+}
+
 module.exports = {
   getConfig,
   setConfig,
+  getConfigSinCobertura,
+  setConfigSinCobertura,
   notificarLeadNuevo,
   notificarLeadsImportados,
+  notificarVentaSinCobertura,
   DESTINATARIO_POR_DEFECTO,
 };

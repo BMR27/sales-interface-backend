@@ -194,6 +194,29 @@ async function createOrderInFullVector(payload) {
   throw new Error(`FullVector respondió ${resp.status}: ${body?.error?.message || ""}`);
 }
 
+// Abre (una sola vez) el expediente de prepago de una venta sin cobertura y
+// manda el aviso. Si el expediente ya existía no se vuelve a notificar: un
+// reintento de sincronización no debe repetir el correo.
+async function abrirGestionPrepago(venta, lead) {
+  try {
+    const existente = await prisma.prepagoGestion.findUnique({ where: { ventaId: venta.id } });
+    if (existente) return;
+
+    await prisma.prepagoGestion.create({
+      data: { ventaId: venta.id, tenantId: venta.tenantId },
+    });
+
+    const vendedor = await prisma.user.findUnique({
+      where: { id: venta.vendedorId },
+      select: { nombre: true, email: true },
+    });
+    const { notificarVentaSinCobertura } = require("./notificaciones");
+    await notificarVentaSinCobertura(venta, lead, { vendedor });
+  } catch (err) {
+    console.error("no se pudo abrir la gestion de prepago de la venta", venta?.id, err);
+  }
+}
+
 async function syncVentaToFullVector(ventaId, options = {}) {
   if (!isEnabled()) return;
 
@@ -213,16 +236,22 @@ async function syncVentaToFullVector(ventaId, options = {}) {
     const payload = buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo, options);
     const { orderId, trackingStatus } = await createOrderInFullVector(payload);
 
-    await prisma.venta.update({
+    const sinCobertura = trackingStatus === "NO_COVERAGE";
+    const actualizada = await prisma.venta.update({
       where: { id: venta.id },
       data: {
         fullvectorSyncStatus: "SYNCED",
         fullvectorOrderId: orderId,
-        fullvectorSinCobertura: trackingStatus === "NO_COVERAGE",
+        fullvectorSinCobertura: sinCobertura,
         fullvectorError: null,
         fullvectorSyncedAt: new Date(),
       },
     });
+
+    // Sin cobertura no hay pago contra entrega: se abre el expediente de
+    // prepago y se avisa por correo a quien cobra. Ambas cosas son idempotentes
+    // y no deben tumbar la sincronización, que ya quedó guardada arriba.
+    if (sinCobertura) await abrirGestionPrepago(actualizada, lead);
   } catch (err) {
     const attempts = venta.fullvectorAttempts + 1;
     const permanente = err instanceof PermanentSyncError || attempts >= MAX_ATTEMPTS;

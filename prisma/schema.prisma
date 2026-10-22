@@ -74,6 +74,8 @@ model Tenant {
   users         User[]                 @relation("TenantUsers")
   leads         Lead[]
   ventas        Venta[]
+  prepagos      PrepagoGestion[]
+  prepagoNotas  PrepagoNota[]
   apiKeys       ApiKey[]
   incomingLeads IncomingLead[]
   llamadas      Llamada[]
@@ -232,7 +234,74 @@ model Venta {
   fullvectorAttempts   Int                  @default(0)
   fullvectorSyncedAt   DateTime?
 
+  prepago PrepagoGestion?
+
   @@map("ventas")
+}
+
+// Gestión aparte de una venta cuyo CP no tiene pago contra entrega. El flujo
+// no es automático a propósito: alguien llama al cliente, le explica que en
+// su zona la mensajería no cobra en efectivo, le ofrece transferencia y hasta
+// que el dinero cae se manda el paquete por mensajería tradicional. Esta
+// tabla es el expediente de esa gestión -- la venta en sí no cambia.
+model PrepagoGestion {
+  id      Int   @id @default(autoincrement())
+  ventaId Int   @unique
+  venta   Venta @relation(fields: [ventaId], references: [id], onDelete: Cascade)
+
+  estado PrepagoEstado @default(PENDIENTE_CONTACTO)
+
+  // Cobro por transferencia. `pagoMonto` se guarda aparte del monto de la
+  // venta: el cliente puede depositar de más o de menos y lo que importa
+  // para liberar el envío es lo que realmente cayó.
+  pagoReferencia     String?
+  pagoMonto          Float?
+  pagoConfirmadoAt   DateTime?
+  pagoConfirmadoPor  String?
+
+  // Envío por fuera de FullVector.
+  paqueteria String?
+  guia       String?
+  enviadoAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  notas PrepagoNota[]
+
+  @@index([tenantId, estado])
+  @@map("prepago_gestiones")
+}
+
+// Bitácora de contacto: cada intento de llamada a un cliente de prepago y en
+// qué quedó. El nombre del autor va desnormalizado igual que en
+// Lead.devueltoPorNombre -- es el dato histórico de ese momento.
+model PrepagoNota {
+  id        Int            @id @default(autoincrement())
+  gestionId Int
+  gestion   PrepagoGestion @relation(fields: [gestionId], references: [id], onDelete: Cascade)
+
+  nota         String
+  autorId      Int?
+  autorNombre  String
+  createdAt    DateTime @default(now())
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([gestionId])
+  @@map("prepago_notas")
+}
+
+enum PrepagoEstado {
+  PENDIENTE_CONTACTO
+  TRANSFERENCIA_OFRECIDA
+  PAGO_CONFIRMADO
+  ENVIADO
+  CANCELADO
 }
 
 enum FullvectorSyncStatus {

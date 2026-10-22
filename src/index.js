@@ -37,6 +37,7 @@ const coverageRoutes = require("./routes/coverage");
 const superadminRoutes = require("./routes/superadmin");
 const proveedorRoutes = require("./routes/proveedor");
 const coordinadorRoutes = require("./routes/coordinador");
+const prepagoRoutes = require("./routes/prepago");
 const voiceRoutes = require("./routes/voice");
 const publicRoutes = require("./routes/public");
 const brandingRoutes = require("./routes/branding");
@@ -133,6 +134,7 @@ app.use("/api/coverage", coverageRoutes);
 app.use("/api/superadmin", superadminRoutes);
 app.use("/api/proveedor", proveedorRoutes);
 app.use("/api/coordinador", coordinadorRoutes);
+app.use("/api/prepago", prepagoRoutes);
 app.use("/api/voice", voiceRoutes);
 app.use("/api/public", publicRoutes);
 
