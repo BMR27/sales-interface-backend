@@ -101,8 +101,35 @@ function buildItems(lead, leadItems, productos, productoCatalogo) {
 // confirmarlo por telefono antes de mandar el paquete.
 const DATO_FALTANTE = "POR CONFIRMAR";
 
+// En buena parte del país las casas no tienen número: domicilios rurales que
+// se ubican por referencias ("única casa subiendo el canal alto", "frente al
+// panteón"). "S/N" es como se escribe eso en una guía de envío, no un dato
+// inventado -- y la orden además lleva lat/lng y las referencias del cliente.
+//
+// Aparte, hay capturas que meten el número dentro de la calle ("saturno 106")
+// y dejan el campo de número vacío. Ahí el dato sí existe: se separa en vez de
+// rechazar la venta.
+const SIN_NUMERO = "S/N";
+
+function resolverNumeroExterior(lead) {
+  const numero = (lead.shippingNumber || "").trim();
+  if (numero) return { street: (lead.shippingStreet || "").trim(), extNumber: numero };
+
+  const calle = (lead.shippingStreet || "").trim();
+  // Sólo un número al final: "saturno 106", "av. juárez 25-A". No toca
+  // nombres que terminan en dígito por otra razón (ej. "Canal 2 Norte"),
+  // porque exige que sea el último token y que la calle tenga algo más.
+  const m = calle.match(/^(.*\S)\s+(\d+[A-Za-z]?(?:\s*-\s*[A-Za-z0-9]+)?)$/);
+  if (m) return { street: m[1].trim(), extNumber: m[2].replace(/\s+/g, "") };
+
+  return { street: calle, extNumber: SIN_NUMERO };
+}
+
 function buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo, options = {}) {
-  const faltantes = ["shippingStreet", "shippingNumber", "colonia", "municipio", "state", "zipCode", "telefono"]
+  // `shippingNumber` ya no entra aquí: su ausencia es un caso legítimo y lo
+  // resuelve resolverNumeroExterior. Antes bastaba ese campo vacío para
+  // detener una venta que tenía dirección, referencias y coordenadas.
+  const faltantes = ["shippingStreet", "colonia", "municipio", "state", "zipCode", "telefono"]
     .filter((campo) => !lead[campo]);
   // `completarFaltantes` es la excepcion puntual: en vez de rechazar la
   // venta, se manda con los huecos marcados. Sin la bandera, el
@@ -122,6 +149,8 @@ function buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo, 
     throw new PermanentSyncError("Falta el SKU de uno o más productos para crear la orden en FullVector");
   }
 
+  const { street, extNumber } = resolverNumeroExterior(lead);
+
   return {
     clientCode: CLIENT_CODE,
     orderNumber: venta.folio,
@@ -132,8 +161,13 @@ function buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo, 
     address: {
       recipientName: `${lead.nombre} ${lead.apellido || ""}`.trim() || DATO_FALTANTE,
       phone: lead.telefono || DATO_FALTANTE,
-      street: lead.shippingStreet || DATO_FALTANTE,
-      extNumber: lead.shippingNumber || DATO_FALTANTE,
+      street: street || DATO_FALTANTE,
+      extNumber,
+      // Las referencias son lo que de verdad ubica un domicilio sin número.
+      // Van en `facade`, que es el campo que FullVector tiene para eso (su
+      // orderIntakeSchema no acepta otro: un `references` se descartaría en
+      // silencio y el mensajero sólo vería "S/N" y una calle).
+      ...(lead.shippingReferences ? { facade: String(lead.shippingReferences).slice(0, 500) } : {}),
       postalCode: lead.zipCode,
       neighborhood: lead.colonia || DATO_FALTANTE,
       municipality: lead.municipio || DATO_FALTANTE,
