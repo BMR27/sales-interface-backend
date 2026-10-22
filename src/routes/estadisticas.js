@@ -228,4 +228,140 @@ router.get("/", async (req, res) => {
   }
 });
 
+// Los mismos campos que buildOrderPayload() exige en src/lib/fullvector.js.
+// Se repiten aquí a propósito: allá son la condición para armar el payload,
+// aquí son el detalle que se le muestra a la coordinadora para que sepa qué
+// capturar. Si cambia uno, hay que cambiar el otro.
+const CAMPOS_ENVIO = [
+  { campo: "shippingStreet", label: "Calle" },
+  { campo: "shippingNumber", label: "Número" },
+  { campo: "colonia", label: "Colonia" },
+  { campo: "municipio", label: "Municipio" },
+  { campo: "state", label: "Estado" },
+  { campo: "zipCode", label: "Código postal" },
+  { campo: "telefono", label: "Teléfono" },
+];
+
+// El motivo se clasifica leyendo el texto que FullVector (o nuestra propia
+// validación previa) dejó en `fullvectorError`. Es texto libre del proveedor,
+// así que el tipo es una pista para agrupar y pintar, nunca una garantía: lo
+// que siempre se muestra tal cual es el mensaje original.
+function clasificar(venta) {
+  if (venta.fullvectorSyncStatus === "PENDING" && venta.fullvectorAttempts === 0 && !venta.fullvectorError) {
+    return { tipo: "NUNCA_INTENTADO", causa: "Nunca se intentó enviar: la integración con FullVector está apagada" };
+  }
+  const error = venta.fullvectorError || "";
+  const texto = error.toLowerCase();
+  if (texto.includes("dirección de envío incompleta")) return { tipo: "DIRECCION_INCOMPLETA", causa: error };
+  if (texto.includes("fuera de cobertura")) return { tipo: "FUERA_DE_COBERTURA", causa: error };
+  if (texto.includes("sku")) return { tipo: "SIN_SKU", causa: error };
+  return { tipo: "OTRO", causa: error || "Sin mensaje del proveedor" };
+}
+
+const minutosEntre = (desde, hasta) =>
+  desde && hasta ? Math.round((hasta.getTime() - desde.getTime()) / 60000) : null;
+
+// GET /api/admin/estadisticas/sincronizacion
+//
+// Detalle de las ventas que no llegaron a FullVector: por qué se rechazó cada
+// una y en qué momento se atendió el lead que la originó. Es la vista a la que
+// lleva el aviso del tablero -- el tablero sólo trae el conteo.
+router.get("/sincronizacion", async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+
+    const ventas = await prisma.venta.findMany({
+      where: { tenantId, NOT: { fullvectorSyncStatus: "SYNCED" } },
+      orderBy: { fecha: "desc" },
+      include: {
+        vendedor: { select: { id: true, nombre: true } },
+        lead: {
+          include: {
+            // Sólo los extremos del historial: con la primera llamada basta
+            // para saber cuándo se atendió, y con la última cuándo se cerró.
+            llamadas: { orderBy: { fecha: "asc" }, select: { fecha: true, duracion: true, resultado: true } },
+          },
+        },
+      },
+    });
+
+    const detalle = ventas.map((v) => {
+      const { tipo, causa } = clasificar(v);
+      const lead = v.lead;
+      const llamadas = lead?.llamadas || [];
+      const primera = llamadas[0]?.fecha || null;
+      const ultima = llamadas.length ? llamadas[llamadas.length - 1].fecha : null;
+
+      return {
+        id: v.id,
+        folio: v.folio,
+        monto: v.monto,
+        costoEnvio: v.costoEnvio,
+        fecha: v.fecha,
+        estado: v.fullvectorSyncStatus,
+        intentos: v.fullvectorAttempts,
+        tipo,
+        causa,
+        vendedor: v.vendedor,
+        lead: lead && {
+          id: lead.id,
+          nombre: `${lead.nombre} ${lead.apellido || ""}`.trim(),
+          telefono: lead.telefono,
+          producto: lead.producto,
+          zipCode: lead.zipCode,
+          colonia: lead.colonia,
+          municipio: lead.municipio,
+          state: lead.state,
+          origen: lead.source,
+          // Qué le falta capturar a la vendedora para que el envío pase.
+          // Vacío cuando el rechazo no fue por dirección.
+          faltantes: CAMPOS_ENVIO.filter((c) => !lead[c.campo]).map((c) => c.label),
+        },
+        // Línea de tiempo del lead: de cuándo entró a cuándo se intentó enviar.
+        tiempos: {
+          leadCreado: lead?.createdAt || null,
+          primeraLlamada: primera,
+          ultimaLlamada: ultima,
+          totalLlamadas: llamadas.length,
+          ubicacionSolicitada: lead?.ubicacionSolicitadaAt || null,
+          ubicacionCompartida: lead?.ubicacionCompartidaAt || null,
+          devuelto: lead?.devueltoAt || null,
+          devueltoMotivo: lead?.devueltoMotivo || null,
+          venta: v.fecha,
+          // Minutos que el lead esperó sin que nadie lo marcara, y cuánto
+          // tardó en cerrarse desde que entró.
+          esperaPrimerContacto: minutosEntre(lead?.createdAt, primera),
+          duracionHastaVenta: minutosEntre(lead?.createdAt, v.fecha),
+        },
+      };
+    });
+
+    // Agrupadas por causa exacta: el mensaje del proveedor trae el dato
+    // concreto (p. ej. el CP fuera de cobertura), así que dos rechazos del
+    // mismo tipo pero distinto CP son grupos distintos a propósito.
+    const grupos = new Map();
+    for (const v of detalle) {
+      if (!grupos.has(v.causa)) grupos.set(v.causa, { causa: v.causa, tipo: v.tipo, total: 0, ventas: [] });
+      const g = grupos.get(v.causa);
+      g.total += 1;
+      g.ventas.push(v);
+    }
+
+    const totales = await prisma.venta.groupBy({
+      by: ["fullvectorSyncStatus"],
+      where: { tenantId },
+      _count: true,
+    });
+
+    res.json({
+      totales: totales.reduce((acc, t) => ({ ...acc, [t.fullvectorSyncStatus]: t._count }), {}),
+      grupos: Array.from(grupos.values()).sort((a, b) => b.total - a.total),
+      montoDetenido: detalle.reduce((s, v) => s + v.monto + (v.costoEnvio || 0), 0),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 module.exports = router;
