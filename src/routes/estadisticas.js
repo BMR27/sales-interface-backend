@@ -364,4 +364,75 @@ router.get("/sincronizacion", async (req, res) => {
   }
 });
 
+// GET /api/admin/estadisticas/cruce-fullvector?prepago=1
+//
+// Cruce de información entre las dos plataformas: cada venta que ya llegó a
+// FullVector con el id que adquirió allá, para poder seguirla de este lado
+// sin tener que buscarla por folio a mano.
+//
+// `prepago=1` deja sólo las que FullVector admitió fuera de su cobertura
+// (trackingStatus NO_COVERAGE): esa es la base que se gestiona aparte -- se
+// les llama para avisarles que en su CP no hay pago en efectivo contra
+// entrega, se les ofrece pago por transferencia y, confirmada, el paquete
+// sale por mensajería tradicional.
+router.get("/cruce-fullvector", async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    const soloPrepago = req.query.prepago === "1" || req.query.prepago === "true";
+
+    const ventas = await prisma.venta.findMany({
+      where: {
+        tenantId,
+        fullvectorSyncStatus: "SYNCED",
+        ...(soloPrepago ? { fullvectorSinCobertura: true } : {}),
+      },
+      orderBy: { fecha: "desc" },
+      include: {
+        vendedor: { select: { id: true, nombre: true } },
+        lead: {
+          select: {
+            id: true, nombre: true, apellido: true, telefono: true, producto: true,
+            shippingStreet: true, shippingNumber: true, colonia: true,
+            municipio: true, state: true, zipCode: true,
+          },
+        },
+      },
+    });
+
+    res.json({
+      total: ventas.length,
+      montoTotal: ventas.reduce((acc, v) => acc + v.monto + (v.costoEnvio || 0), 0),
+      ventas: ventas.map((v) => ({
+        id: v.id,
+        folio: v.folio,
+        // El id de la orden en FullVector: la llave del cruce entre ambas
+        // plataformas. Null sólo en ventas sincronizadas antes de que se
+        // guardara (se recupera al reintentar, ver buscarOrdenPorFolio).
+        fullvectorOrderId: v.fullvectorOrderId,
+        sinCobertura: v.fullvectorSinCobertura,
+        prepago: v.fullvectorSinCobertura,
+        fecha: v.fecha,
+        monto: v.monto,
+        costoEnvio: v.costoEnvio,
+        totalACobrar: v.monto + (v.costoEnvio || 0),
+        sincronizadaAt: v.fullvectorSyncedAt,
+        vendedor: v.vendedor,
+        cliente: v.lead && {
+          id: v.lead.id,
+          nombre: `${v.lead.nombre} ${v.lead.apellido || ""}`.trim(),
+          telefono: v.lead.telefono,
+          producto: v.lead.producto,
+          direccion: [v.lead.shippingStreet, v.lead.shippingNumber, v.lead.colonia, v.lead.municipio, v.lead.state, v.lead.zipCode]
+            .filter(Boolean)
+            .join(", "),
+          zipCode: v.lead.zipCode,
+        },
+      })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 module.exports = router;

@@ -94,17 +94,27 @@ function buildItems(lead, leadItems, productos, productoCatalogo) {
   ];
 }
 
-function buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo) {
-  const direccionIncompleta =
-    !lead.shippingStreet ||
-    !lead.shippingNumber ||
-    !lead.colonia ||
-    !lead.municipio ||
-    !lead.state ||
-    !lead.zipCode ||
-    !lead.telefono;
-  if (direccionIncompleta) {
+// Valor con el que se rellena un campo de domicilio que el lead no trae,
+// cuando se fuerza el envio de una venta vieja (ver
+// scripts/resync-fullvector-fallidas.js). Es visible a proposito: quien
+// opere la orden en FullVector tiene que ver que ese dato falta y
+// confirmarlo por telefono antes de mandar el paquete.
+const DATO_FALTANTE = "POR CONFIRMAR";
+
+function buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo, options = {}) {
+  const faltantes = ["shippingStreet", "shippingNumber", "colonia", "municipio", "state", "zipCode", "telefono"]
+    .filter((campo) => !lead[campo]);
+  // `completarFaltantes` es la excepcion puntual: en vez de rechazar la
+  // venta, se manda con los huecos marcados. Sin la bandera, el
+  // comportamiento de siempre -- una direccion incompleta no se envia.
+  if (faltantes.length > 0 && !options.completarFaltantes) {
     throw new PermanentSyncError("Dirección de envío incompleta en el lead, no se puede crear la orden en FullVector");
+  }
+  // El CP es lo unico que no se puede inventar: FullVector resuelve
+  // cobertura y equipo con el, y un CP falso mandaria la orden al equipo
+  // equivocado en vez de a la base de prepago.
+  if (!lead.zipCode) {
+    throw new PermanentSyncError("El lead no tiene código postal, no se puede crear la orden en FullVector");
   }
 
   const items = buildItems(lead, leadItems, productos, productoCatalogo);
@@ -120,14 +130,14 @@ function buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo) 
     // producto, base de la comisión del vendedor).
     orderValue: venta.monto + (venta.costoEnvio || 0),
     address: {
-      recipientName: `${lead.nombre} ${lead.apellido || ""}`.trim(),
-      phone: lead.telefono,
-      street: lead.shippingStreet,
-      extNumber: lead.shippingNumber,
+      recipientName: `${lead.nombre} ${lead.apellido || ""}`.trim() || DATO_FALTANTE,
+      phone: lead.telefono || DATO_FALTANTE,
+      street: lead.shippingStreet || DATO_FALTANTE,
+      extNumber: lead.shippingNumber || DATO_FALTANTE,
       postalCode: lead.zipCode,
-      neighborhood: lead.colonia,
-      municipality: lead.municipio,
-      state: lead.state,
+      neighborhood: lead.colonia || DATO_FALTANTE,
+      municipality: lead.municipio || DATO_FALTANTE,
+      state: lead.state || DATO_FALTANTE,
       ...(lead.lat != null ? { latitude: lead.lat } : {}),
       ...(lead.lng != null ? { longitude: lead.lng } : {}),
     },
@@ -135,13 +145,29 @@ function buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo) 
   };
 }
 
+// OUT_OF_COVERAGE ya no aparece aqui: FullVector dejo de rechazar los CP
+// fuera de cobertura y ahora crea la orden con trackingStatus NO_COVERAGE
+// (ver createOrder en dynamic-system-design). Esas ventas se marcan
+// `fullvectorSinCobertura` para gestionarlas como prepago.
 const PERMANENT_ERROR_CODES = [
   "CLIENT_NOT_FOUND",
   "PRODUCT_NOT_FOUND",
   "VALIDATION_ERROR",
-  "OUT_OF_COVERAGE",
   "FORBIDDEN",
 ];
+
+// Recupera el id de FullVector de una orden que ya existe alla (folio
+// duplicado): sin esto, una venta marcada SYNCED por un 409 se quedaba sin
+// id y no habia forma de cruzarla.
+async function buscarOrdenPorFolio(folio) {
+  const resp = await authedFetch(`/api/v1/orders/search?orderNumber=${encodeURIComponent(folio)}`, {
+    method: "GET",
+  });
+  if (!resp.ok) return null;
+  const body = await resp.json().catch(() => ({}));
+  const match = (body?.data || []).find((o) => o.orden === folio);
+  return match ? { orderId: match.id, trackingStatus: match.estatus } : null;
+}
 
 async function createOrderInFullVector(payload) {
   const resp = await authedFetch("/api/v1/orders", {
@@ -151,11 +177,14 @@ async function createOrderInFullVector(payload) {
 
   if (resp.status === 201 || resp.status === 200) {
     const body = await resp.json();
-    return { orderId: body?.data?.id || null };
+    // trackingStatus NO_COVERAGE = FullVector la acepto pero el CP esta
+    // fuera de su cobertura: no hay pago en efectivo contra entrega, se
+    // gestiona como prepago (transferencia + mensajeria tradicional).
+    return { orderId: body?.data?.id || null, trackingStatus: body?.data?.trackingStatus || null };
   }
   if (resp.status === 409) {
     // DuplicateOrderError: ya se había sincronizado en un intento anterior.
-    return { orderId: null };
+    return (await buscarOrdenPorFolio(payload.orderNumber)) || { orderId: null, trackingStatus: null };
   }
 
   const body = await resp.json().catch(() => ({}));
@@ -165,7 +194,7 @@ async function createOrderInFullVector(payload) {
   throw new Error(`FullVector respondió ${resp.status}: ${body?.error?.message || ""}`);
 }
 
-async function syncVentaToFullVector(ventaId) {
+async function syncVentaToFullVector(ventaId, options = {}) {
   if (!isEnabled()) return;
 
   const venta = await prisma.venta.findUnique({ where: { id: ventaId } });
@@ -181,14 +210,15 @@ async function syncVentaToFullVector(ventaId) {
       ? await prisma.producto.findUnique({ where: { id: lead.productoId } })
       : null;
 
-    const payload = buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo);
-    const { orderId } = await createOrderInFullVector(payload);
+    const payload = buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo, options);
+    const { orderId, trackingStatus } = await createOrderInFullVector(payload);
 
     await prisma.venta.update({
       where: { id: venta.id },
       data: {
         fullvectorSyncStatus: "SYNCED",
         fullvectorOrderId: orderId,
+        fullvectorSinCobertura: trackingStatus === "NO_COVERAGE",
         fullvectorError: null,
         fullvectorSyncedAt: new Date(),
       },
@@ -229,6 +259,7 @@ async function checkCoverage(postalCode, neighborhood) {
 module.exports = {
   isEnabled,
   syncVentaToFullVector,
+  buscarOrdenPorFolio,
   checkCoverage,
   PermanentSyncError,
 };

@@ -223,6 +223,11 @@ model Venta {
 
   fullvectorSyncStatus FullvectorSyncStatus @default(PENDING)
   fullvectorOrderId    String?
+  // La orden se creó en FullVector pero su CP está fuera de la cobertura
+  // de mensajería (trackingStatus NO_COVERAGE): no hay pago en efectivo
+  // contra entrega. Esta es la base "prepago" -- se les llama aparte, se
+  // cobra por transferencia y el paquete sale por mensajería tradicional.
+  fullvectorSinCobertura Boolean            @default(false)
   fullvectorError      String?
   fullvectorAttempts   Int                  @default(0)
   fullvectorSyncedAt   DateTime?
