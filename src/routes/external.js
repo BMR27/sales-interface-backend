@@ -2,6 +2,7 @@ const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const { apiKeyMiddleware } = require("../middleware/apiKey");
 const { getNextVendedor } = require("../lib/assignment");
+const { getParametros } = require("../lib/parametros");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
 const { detallarMovimiento } = require("../lib/auditoria");
 const {
@@ -86,9 +87,13 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       },
     });
 
-    const vendedor = await getNextVendedor(prisma, tenantId);
+    // Por defecto el lead entra SIN vendedora y espera en la cola del
+    // coordinador, que lo reparte a mano. El reparto automatico por turnos
+    // queda como opcion en Configuracion > Operacion.
+    const { asignacionAutomatica } = await getParametros(tenantId);
+    const vendedor = asignacionAutomatica ? await getNextVendedor(prisma, tenantId) : null;
 
-    if (!vendedor) {
+    if (asignacionAutomatica && !vendedor) {
       await prisma.incomingLead.update({
         where: { id: incomingLead.id },
         data: { status: "FAILED", errorMessage: "No hay vendedores activos disponibles" },
@@ -109,7 +114,7 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
         producto: product,
         categoria: category,
         folio,
-        vendedorId: vendedor.id,
+        vendedorId: vendedor?.id ?? null,
         source: "EXTERNAL_API",
         country,
         city: city || null,
@@ -125,13 +130,24 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
 
     await prisma.incomingLead.update({
       where: { id: incomingLead.id },
-      data: { status: "ASSIGNED", assignedLeadId: lead.id, assignedVendedorId: vendedor.id },
+      // Sin vendedora todavia el lead esta recibido, no asignado: el
+      // proveedor lo ve como pendiente, que es la verdad.
+      data: {
+        status: vendedor ? "ASSIGNED" : "RECEIVED",
+        assignedLeadId: lead.id,
+        assignedVendedorId: vendedor?.id ?? null,
+      },
     });
 
     detallarMovimiento(req, {
       entidadId: lead.id,
-      descripcion: `Lead ${lead.nombre} recibido por API y asignado a ${vendedor.nombre}`,
-      despues: { folio, nombre: lead.nombre, telefono: lead.telefono, producto: lead.producto, vendedor: vendedor.nombre },
+      descripcion: vendedor
+        ? `Lead ${lead.nombre} recibido por API y asignado a ${vendedor.nombre}`
+        : `Lead ${lead.nombre} recibido por API, pendiente de asignar`,
+      despues: {
+        folio, nombre: lead.nombre, telefono: lead.telefono, producto: lead.producto,
+        vendedor: vendedor?.nombre ?? "sin asignar",
+      },
     });
 
     notificarLeadNuevo(lead, { vendedor, origen: "api_externa" });
@@ -140,7 +156,7 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       received: true,
       folio,
       leadId: lead.id,
-      assignedTo: { id: vendedor.id, nombre: vendedor.nombre },
+      assignedTo: vendedor ? { id: vendedor.id, nombre: vendedor.nombre } : null,
     });
   } catch (err) {
     console.error(err);

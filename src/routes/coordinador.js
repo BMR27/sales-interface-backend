@@ -3,6 +3,7 @@ const ExcelJS = require("exceljs");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const coordinadorMiddleware = require("../middleware/coordinador");
+const { detallarMovimiento } = require("../lib/auditoria");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -60,12 +61,18 @@ router.get("/overview", async (req, res) => {
       }
     }
 
-    const totales = { asignados: 0, pendientes: 0, concretadas: 0, rechazadas: 0, reagendadas: 0 };
+    const totales = { asignados: 0, sinAsignar: 0, pendientes: 0, concretadas: 0, rechazadas: 0, reagendadas: 0 };
 
     for (const row of grouped) {
       const bucket = porVendedor[row.vendedorId];
       const key = classify(row.status);
       const field = key === "pendiente" ? "pendientes" : key === "concretada" ? "concretadas" : key === "rechazada" ? "rechazadas" : "reagendadas";
+      // Un lead sin vendedora no esta asignado a nadie: contarlo en
+      // "asignados" inflaba el tablero con la propia cola por repartir.
+      if (row.vendedorId == null) {
+        totales.sinAsignar += row._count;
+        continue;
+      }
       totales.asignados += row._count;
       totales[field] += row._count;
       if (bucket) {
@@ -103,25 +110,49 @@ router.get("/vendedores", async (req, res) => {
 // GET /api/coordinador/leads
 router.get("/leads", async (req, res) => {
   try {
-    const { state, productoId, search } = req.query;
-    const where = { tenantId: req.user.tenantId, asignadoPorCoordinador: false };
+    const { state, productoId, search, asignacion } = req.query;
+    const where = { tenantId: req.user.tenantId };
+
+    // Los dos filtros de abajo son OR por dentro, asi que van en un AND:
+    // asignarlos los dos a where.OR haria que el segundo pisara al primero.
+    const filtros = [];
+
+    // La cola de trabajo son los leads sin vendedora: con asignacion manual
+    // es lo que el coordinador tiene que repartir. "asignados" y "todos"
+    // quedan disponibles para consultar.
+    // "pendientes" es estrictamente lo que no tiene vendedora, para que la
+    // lista cuadre con el contador `sinAsignar` que va en el mismo response.
+    // Un lead ya repartido se consulta y se reasigna desde "asignados".
+    if (asignacion === "asignados") {
+      where.vendedorId = { not: null };
+    } else if (asignacion !== "todos") {
+      where.vendedorId = null;
+    }
+
     if (state) where.state = state;
     if (productoId) where.productoId = parseInt(productoId);
     if (search) {
-      where.OR = [
-        { nombre: { contains: search, mode: "insensitive" } },
-        { producto: { contains: search, mode: "insensitive" } },
-      ];
+      filtros.push({
+        OR: [
+          { nombre: { contains: search, mode: "insensitive" } },
+          { producto: { contains: search, mode: "insensitive" } },
+        ],
+      });
     }
+    if (filtros.length > 0) where.AND = filtros;
 
-    const leads = await prisma.lead.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      take: 100,
-      include: { vendedor: { select: { id: true, nombre: true } } },
-    });
+    const [leads, sinAsignar] = await Promise.all([
+      prisma.lead.findMany({
+        where,
+        // Los que no tienen vendedora van arriba: son los que esperan.
+        orderBy: [{ vendedorId: { sort: "asc", nulls: "first" } }, { createdAt: "desc" }],
+        take: 100,
+        include: { vendedor: { select: { id: true, nombre: true } } },
+      }),
+      prisma.lead.count({ where: { tenantId: req.user.tenantId, vendedorId: null } }),
+    ]);
 
-    res.json({ leads });
+    res.json({ leads, sinAsignar });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
@@ -141,12 +172,37 @@ router.post("/leads/asignar", async (req, res) => {
     });
     if (!vendedor) return res.status(404).json({ error: "Vendedor no encontrado" });
 
+    const ids = leadIds.map(Number).filter(Number.isInteger);
+    const antes = await prisma.lead.findMany({
+      where: { id: { in: ids }, tenantId: req.user.tenantId },
+      select: { id: true, nombre: true, vendedor: { select: { id: true, nombre: true } } },
+    });
+    if (antes.length === 0) return res.status(404).json({ error: "No se encontraron esos leads" });
+
     const result = await prisma.lead.updateMany({
-      where: { id: { in: leadIds.map(Number) }, tenantId: req.user.tenantId },
+      where: { id: { in: antes.map((l) => l.id) }, tenantId: req.user.tenantId },
       data: { vendedorId: vendedor.id, asignadoPorCoordinador: true },
     });
 
-    res.json({ message: "Leads asignados", actualizados: result.count });
+    // El kardex necesita saber a quien se le quito el lead, no solo a quien
+    // se le dio: una reasignacion sin el "antes" no se puede auditar.
+    detallarMovimiento(req, {
+      entidadId: antes.length === 1 ? antes[0].id : null,
+      descripcion:
+        antes.length === 1
+          ? `Asignó el lead ${antes[0].nombre} a ${vendedor.nombre}`
+          : `Asignó ${antes.length} leads a ${vendedor.nombre}`,
+      antes: {
+        leads: antes.map((l) => ({ id: l.id, nombre: l.nombre, vendedor: l.vendedor?.nombre ?? "sin asignar" })),
+      },
+      despues: { vendedor: vendedor.nombre, leads: antes.map((l) => l.id) },
+    });
+
+    const sinAsignar = await prisma.lead.count({
+      where: { tenantId: req.user.tenantId, vendedorId: null },
+    });
+
+    res.json({ message: "Leads asignados", actualizados: result.count, sinAsignar });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

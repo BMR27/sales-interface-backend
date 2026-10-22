@@ -9,6 +9,14 @@ const prisma = new PrismaClient();
 // `min`/`max` no son adorno: son el rango que el PUT valida, para que un
 // dedazo no deje la comisión en 1500% ni la meta en negativo.
 const DEFINICION = {
+  asignacionAutomatica: {
+    tipo: "boolean",
+    default: false,
+    label: "Asignar leads automáticamente",
+    ayuda:
+      "Apagado, los leads que llegan por la API entran sin vendedora y esperan en la cola del coordinador. Encendido, se reparten solos por turnos entre las vendedoras activas.",
+    grupo: "Asignación de leads",
+  },
   comisionPorcentaje: {
     default: 15,
     min: 0,
@@ -68,6 +76,10 @@ const DEFINICION = {
 const CLAVES = Object.keys(DEFINICION);
 const PREFIJO = "parametros.";
 
+function esBooleano(clave) {
+  return DEFINICION[clave]?.tipo === "boolean";
+}
+
 function valoresPorDefecto() {
   return Object.fromEntries(CLAVES.map((k) => [k, DEFINICION[k].default]));
 }
@@ -82,8 +94,13 @@ async function getParametros(tenantId) {
 
   for (const fila of filas) {
     const clave = fila.key.slice(PREFIJO.length);
-    const num = Number(fila.value);
-    if (clave in valores && Number.isFinite(num)) valores[clave] = num;
+    if (!(clave in valores)) continue;
+    if (esBooleano(clave)) {
+      valores[clave] = fila.value === "true";
+    } else {
+      const num = Number(fila.value);
+      if (Number.isFinite(num)) valores[clave] = num;
+    }
   }
   return valores;
 }
@@ -97,6 +114,12 @@ async function setParametros(tenantId, entrada) {
   for (const [clave, valor] of Object.entries(entrada || {})) {
     if (!(clave in DEFINICION)) continue;
     const def = DEFINICION[clave];
+
+    if (esBooleano(clave)) {
+      aGuardar[clave] = Boolean(valor);
+      continue;
+    }
+
     const num = Number(valor);
     if (!Number.isFinite(num)) {
       errores.push(`${def.label}: debe ser un número`);
@@ -131,6 +154,7 @@ function calcularCostoEnvio({ cantidadTotal, cobertura }, params) {
 
 module.exports = {
   DEFINICION,
+  esBooleano,
   CLAVES,
   valoresPorDefecto,
   getParametros,

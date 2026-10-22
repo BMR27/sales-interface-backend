@@ -118,8 +118,10 @@ model Lead {
   monto      Float?
   categoria  String?
   notas      String?
-  vendedorId Int
-  vendedor   User       @relation(fields: [vendedorId], references: [id])
+  // Nullable a proposito: con asignacion manual el lead entra sin vendedora
+  // y espera en la cola del coordinador (ver src/lib/assignment.js).
+  vendedorId Int?
+  vendedor   User?      @relation(fields: [vendedorId], references: [id])
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
 

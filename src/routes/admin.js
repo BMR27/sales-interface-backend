@@ -9,6 +9,7 @@ const { getNextVendedor } = require("../lib/assignment");
 const { parseWorkbookBuffer, validateRow, buildTemplateBuffer } = require("../lib/leadsImport");
 const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
 const { notificarLeadsImportados } = require("../lib/notificaciones");
+const { getParametros } = require("../lib/parametros");
 const { detallarMovimiento } = require("../lib/auditoria");
 
 const router = express.Router();
@@ -121,9 +122,13 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Máximo 1000 leads por carga" });
     }
 
+    // Igual que la API: sin asignacion automatica, una fila sin vendedora
+    // explicita entra a la cola en vez de repartirse sola.
+    const { asignacionAutomatica } = await getParametros(tenantId);
+
     const vendedoresCache = new Map();
     async function resolveVendedor(email) {
-      if (!email) return getNextVendedor(prisma, tenantId);
+      if (!email) return asignacionAutomatica ? getNextVendedor(prisma, tenantId) : null;
       const key = String(email).toLowerCase();
       if (vendedoresCache.has(key)) return vendedoresCache.get(key);
       const vendedor = await prisma.user.findFirst({
@@ -144,13 +149,17 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
       }
 
       const vendedor = await resolveVendedor(data.vendedorEmail);
-      if (!vendedor) {
+      // Solo es error si se pidio una vendedora concreta y no existe; sin
+      // email es intencional: el lead queda esperando en la cola.
+      if (!vendedor && data.vendedorEmail) {
         resultados.errores.push({
           fila: ref,
-          error: data.vendedorEmail
-            ? `Vendedor '${data.vendedorEmail}' no encontrado o inactivo`
-            : "No hay vendedores activos disponibles",
+          error: `Vendedor '${data.vendedorEmail}' no encontrado o inactivo`,
         });
+        continue;
+      }
+      if (!vendedor && asignacionAutomatica) {
+        resultados.errores.push({ fila: ref, error: "No hay vendedores activos disponibles" });
         continue;
       }
 
@@ -181,7 +190,7 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
             zipCode: data.zipCode ? String(data.zipCode) : null,
             internalSku: data.internalSku ? String(data.internalSku) : null,
             productoId,
-            vendedorId: vendedor.id,
+            vendedorId: vendedor?.id ?? null,
             source: "MANUAL",
             tenantId,
           },
