@@ -2,13 +2,13 @@ const express = require("express");
 const ExcelJS = require("exceljs");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
-const coordinadorMiddleware = require("../middleware/coordinador");
+const coordinacionMiddleware = require("../middleware/coordinacion");
 const { detallarMovimiento } = require("../lib/auditoria");
 
 const router = express.Router();
 const prisma = new PrismaClient();
 
-router.use(authMiddleware, coordinadorMiddleware);
+router.use(authMiddleware, coordinacionMiddleware);
 
 // Agrupaciones que usa el coordinador en su historial. Con cuatro estatus
 // cada grupo es uno solo, pero se mantiene la forma de lista porque los
@@ -288,39 +288,181 @@ router.get("/historial/export", async (req, res) => {
       where,
       orderBy: { createdAt: "desc" },
       take: 5000,
-      include: { vendedor: { select: { nombre: true } } },
+      include: {
+        vendedor: { select: { nombre: true } },
+        // El folio y el estado del envio viven en la venta, no en el lead:
+        // sin esto el reporte no servia para dar seguimiento al cierre.
+        venta: {
+          select: {
+            folio: true, monto: true, comision: true, costoEnvio: true, fecha: true,
+            entregaExitosa: true, fullvectorOrderId: true, fullvectorSinCobertura: true,
+            fullvectorSyncStatus: true,
+          },
+        },
+        llamadas: { select: { fecha: true }, orderBy: { fecha: "asc" }, take: 1 },
+        _count: { select: { llamadas: true } },
+      },
     });
 
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("Historial");
+    workbook.creator = "PerfectSelft";
+    workbook.created = new Date();
+    const sheet = workbook.addWorksheet("Historial", {
+      views: [{ state: "frozen", ySplit: 1 }],
+    });
+
     sheet.columns = [
-      { header: "Vendedor", key: "vendedor", width: 22 },
-      { header: "Cliente", key: "cliente", width: 24 },
+      { header: "Folio", key: "folio", width: 16 },
+      { header: "Estatus", key: "estatus", width: 13 },
+      { header: "Fecha del lead", key: "fecha", width: 18 },
+      { header: "Fecha de venta", key: "fechaVenta", width: 18 },
+      { header: "Vendedora", key: "vendedor", width: 26 },
+      { header: "Cliente", key: "cliente", width: 26 },
       { header: "Telefono", key: "telefono", width: 16 },
-      { header: "Producto", key: "producto", width: 22 },
-      { header: "Estado", key: "estado", width: 16 },
-      { header: "Estatus", key: "estatus", width: 14 },
-      { header: "Fecha", key: "fecha", width: 18 },
-      { header: "Monto", key: "monto", width: 12 },
+      { header: "Producto", key: "producto", width: 24 },
+      { header: "Monto", key: "monto", width: 13 },
+      { header: "Envio", key: "envio", width: 11 },
+      { header: "Total cobrado", key: "total", width: 14 },
+      { header: "Comision", key: "comision", width: 12 },
+      { header: "Calle", key: "calle", width: 26 },
+      { header: "Numero", key: "numero", width: 10 },
+      { header: "Colonia", key: "colonia", width: 22 },
+      { header: "Municipio", key: "municipio", width: 20 },
+      { header: "Estado", key: "estado", width: 18 },
+      { header: "CP", key: "cp", width: 9 },
+      { header: "Referencias", key: "referencias", width: 42 },
+      { header: "Entrega", key: "entrega", width: 16 },
+      { header: "ID FullVector", key: "fullvector", width: 28 },
+      { header: "Llamadas", key: "llamadas", width: 10 },
+      { header: "1a llamada", key: "primeraLlamada", width: 18 },
     ];
+
+    const COLOR_ESTATUS = {
+      concretada: "FF1B9247",
+      rechazada: "FFC0392B",
+      reagendada: "FFB8860B",
+      pendiente: "FF6B7280",
+    };
+
     for (const lead of leads) {
-      sheet.addRow({
-        vendedor: lead.vendedor?.nombre || "",
+      const v = lead.venta;
+      const estatus = classify(lead.status);
+      const fila = sheet.addRow({
+        folio: v?.folio || lead.folio || "",
+        estatus,
+        fecha: lead.createdAt,
+        fechaVenta: v?.fecha || "",
+        vendedor: lead.vendedor?.nombre || "Sin asignar",
         cliente: lead.nombre,
         telefono: lead.telefono,
         producto: lead.producto,
+        monto: v?.monto ?? lead.monto ?? "",
+        envio: v?.costoEnvio ?? "",
+        total: v ? v.monto + (v.costoEnvio || 0) : "",
+        comision: v?.comision ?? "",
+        calle: lead.shippingStreet || "",
+        numero: lead.shippingNumber || "",
+        colonia: lead.colonia || "",
+        municipio: lead.municipio || "",
         estado: lead.state || "",
-        estatus: classify(lead.status),
-        fecha: lead.createdAt,
-        monto: lead.monto || "",
+        cp: lead.zipCode || "",
+        referencias: lead.shippingReferences || "",
+        entrega: !v
+          ? ""
+          : v.fullvectorSyncStatus !== "SYNCED"
+            ? "No llego a FullVector"
+            : v.fullvectorSinCobertura
+              ? "Prepago (sin COD)"
+              : v.entregaExitosa
+                ? "Entregada"
+                : "En transito",
+        fullvector: v?.fullvectorOrderId || "",
+        llamadas: lead._count.llamadas,
+        primeraLlamada: lead.llamadas[0]?.fecha || "",
       });
+
+      fila.getCell("estatus").font = { bold: true, color: { argb: COLOR_ESTATUS[estatus] } };
+      for (const key of ["monto", "envio", "total", "comision"]) {
+        fila.getCell(key).numFmt = '"$"#,##0.00';
+      }
+      for (const key of ["fecha", "fechaVenta", "primeraLlamada"]) {
+        fila.getCell(key).numFmt = "dd/mm/yyyy hh:mm";
+      }
+      fila.getCell("referencias").alignment = { wrapText: true, vertical: "top" };
+      // El CP como texto: Excel se come el cero inicial de los CP que
+      // empiezan con 0 y deja de cuadrar con el catalogo.
+      fila.getCell("cp").numFmt = "@";
+      // Una venta que no llego a la mensajeria se tiene que ver de lejos.
+      if (v && v.fullvectorSyncStatus !== "SYNCED") {
+        fila.getCell("entrega").font = { bold: true, color: { argb: "FFC0392B" } };
+      }
     }
-    sheet.getRow(1).font = { bold: true };
+
+    const encabezado = sheet.getRow(1);
+    encabezado.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+    encabezado.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF7E5A97" } };
+    encabezado.alignment = { vertical: "middle", horizontal: "left" };
+    encabezado.height = 22;
+
+    // Zebra: con 20+ columnas, seguir un renglon con la vista se vuelve dificil.
+    for (let i = 2; i <= sheet.rowCount; i++) {
+      if (i % 2 === 0) {
+        sheet.getRow(i).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF6F4F8" } };
+      }
+    }
+
+    sheet.autoFilter = { from: "A1", to: { row: 1, column: sheet.columns.length } };
 
     const buffer = await workbook.xlsx.writeBuffer();
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", 'attachment; filename="historial.xlsx"');
     res.send(Buffer.from(buffer));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/coordinador/leads/:id/reactivar
+//
+// Regresa a la cola de asignacion un lead descartado. Hasta ahora un
+// DESCARTADO era callejon sin salida: /api/leads/:id/devolver lo rechaza a
+// proposito (no es trabajo pendiente de nadie) y la cola solo mira los leads
+// sin vendedora, asi que un descarte por error se perdia para siempre.
+router.post("/leads/:id/reactivar", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const motivo = typeof req.body?.motivo === "string" ? req.body.motivo.trim().slice(0, 300) : "";
+
+    const lead = await prisma.lead.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
+    if (lead.status === "VENTA") {
+      return res.status(409).json({ error: "Este lead ya tiene una venta cerrada" });
+    }
+    if (lead.status !== "DESCARTADO") {
+      return res.status(409).json({ error: "Este lead no esta descartado" });
+    }
+
+    const actualizado = await prisma.lead.update({
+      where: { id },
+      data: {
+        status: "NUEVO",
+        vendedorId: null,
+        asignadoPorCoordinador: false,
+        devueltoAt: new Date(),
+        devueltoMotivo: motivo || "Descartado por error, reactivado para volver a llamar",
+        devueltoPorNombre: req.user.nombre,
+      },
+    });
+
+    detallarMovimiento(req, {
+      entidadId: id,
+      descripcion: `Reactivo el lead descartado ${lead.nombre}`,
+      antes: { status: "DESCARTADO", vendedor: lead.vendedorId },
+      despues: { status: "NUEVO", vendedor: "sin asignar", motivo: actualizado.devueltoMotivo },
+    });
+
+    res.json({ message: "Lead regresado a la cola de asignacion", leadId: id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

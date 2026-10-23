@@ -111,7 +111,12 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
         apellido: lastName || null,
         edad: Number.isFinite(Number(age)) && age !== "" && age != null ? Number(age) : null,
         telefono: phone,
-        producto: product,
+        // El catálogo manda sobre el nombre que trae el proveedor: cuando el
+        // SKU resuelve a un producto nuestro, se guarda el nombre de ese
+        // producto. El proveedor sigue mandando nombres viejos (p. ej.
+        // "Prosta Vital Men" por lo que aquí es "Vital Men Balance") y así la
+        // vendedora le leía al cliente un nombre que ya no existe.
+        producto: productoCatalogo?.nombre || product,
         categoria: category,
         folio,
         vendedorId: vendedor?.id ?? null,
