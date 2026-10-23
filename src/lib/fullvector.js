@@ -322,6 +322,32 @@ async function listarOrdenesPorEstatus(estatus) {
   return encontradas;
 }
 
+/**
+ * Mueve la venta segun el resultado que dicta FullVector. Es el unico lugar
+ * donde se escribe `entregaExitosa`/`cancelada` por confirmacion de
+ * FullVector, para que llegue por donde llegue el aviso -- el tick de
+ * `sincronizarEntregas` o el webhook POST /api/external/entregas -- la venta
+ * quede exactamente igual. Que `entregaExitosa` habilite el pago de comision
+ * (ver comisiones.js) es justo lo que no admite dos caminos distintos.
+ *
+ * No recalcula la quincena: quien llama decide cuando hacerlo (el tick lo
+ * hace una sola vez al final, agrupando por vendedora).
+ */
+async function aplicarResultadoEntrega(ventaId, estatus) {
+  await prisma.venta.update({
+    where: { id: ventaId },
+    data:
+      estatus === "SUCCESSFUL_DELIVERY"
+        ? { entregaExitosa: true, entregaConfirmadaAt: new Date(), entregaConfirmadaPor: "FullVector" }
+        : {
+            entregaExitosa: false,
+            cancelada: true,
+            canceladaAt: new Date(),
+            canceladaMotivo: "FullVector reportó entrega no exitosa",
+          },
+  });
+}
+
 // La entrega la dicta FullVector, no nosotros: una venta se da por entregada
 // cuando su orden llega a SUCCESSFUL_DELIVERY allá. Eso es lo que habilita el
 // pago de comisión (ver src/lib/comisiones.js). UNSUCCESSFUL_DELIVERY marca
@@ -366,18 +392,7 @@ async function sincronizarEntregas() {
       const venta = porOrderId.get(orden.id);
       if (!venta) continue;
 
-      await prisma.venta.update({
-        where: { id: venta.id },
-        data:
-          campo === "entregada"
-            ? { entregaExitosa: true, entregaConfirmadaAt: new Date(), entregaConfirmadaPor: "FullVector" }
-            : {
-                entregaExitosa: false,
-                cancelada: true,
-                canceladaAt: new Date(),
-                canceladaMotivo: "FullVector reportó entrega no exitosa",
-              },
-      });
+      await aplicarResultadoEntrega(venta.id, estatus);
       if (campo === "entregada") entregadas += 1;
       else canceladas += 1;
       tocadas.set(`${venta.tenantId}:${venta.vendedorId}:${venta.fecha.toISOString()}`, venta);
@@ -414,6 +429,7 @@ async function checkCoverage(postalCode, neighborhood) {
 
 module.exports = {
   isEnabled,
+  aplicarResultadoEntrega,
   syncVentaToFullVector,
   sincronizarEntregas,
   buscarOrdenPorFolio,

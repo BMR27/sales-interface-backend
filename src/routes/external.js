@@ -5,6 +5,8 @@ const { getNextVendedor } = require("../lib/assignment");
 const { getParametros } = require("../lib/parametros");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
 const { detallarMovimiento } = require("../lib/auditoria");
+const { aplicarResultadoEntrega } = require("../lib/fullvector");
+const { recalcularQuincena } = require("../lib/comisiones");
 const {
   LEAD_STATUSES,
   LEAD_STATUS_LABELS,
@@ -342,22 +344,46 @@ router.get("/leads", apiKeyMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/external/entregas — aviso de FullVector cuando una orden se
-// entrega exitosamente (el reverso de la venta que creó esa orden allá).
+// POST /api/external/entregas — aviso de FullVector cuando una orden llega a
+// su resultado final (el reverso de la venta que creó esa orden allá).
 // Autenticado por X-API-Key, igual que el resto de /api/external.
+//
+// Es el camino rápido: el mismo movimiento lo hace el tick de
+// `sincronizarEntregas` cada 15 min, que sigue siendo la red de seguridad si
+// un aviso se pierde. Por eso aquí se aplica EXACTAMENTE el mismo cambio
+// (aplicarResultadoEntrega) y se recalcula la quincena igual que el tick:
+// `entregaExitosa` habilita el pago de comisión, así que no puede quedar a
+// medias según por dónde haya entrado el aviso.
+const RESULTADOS_ENTREGA = ["SUCCESSFUL_DELIVERY", "UNSUCCESSFUL_DELIVERY"];
+
 router.post("/entregas", apiKeyMiddleware, async (req, res) => {
   try {
     const { folio, status } = req.body || {};
     if (!folio) return res.status(400).json({ error: "folio requerido" });
+    if (!RESULTADOS_ENTREGA.includes(status)) {
+      return res.status(400).json({ error: `status debe ser uno de: ${RESULTADOS_ENTREGA.join(", ")}` });
+    }
 
     const venta = await prisma.venta.findFirst({
       where: { folio, tenantId: req.apiKey.tenantId },
     });
     if (!venta) return res.status(404).json({ error: "Venta no encontrada para ese folio" });
 
-    if (status === "SUCCESSFUL_DELIVERY") {
-      await prisma.venta.update({ where: { id: venta.id }, data: { entregaExitosa: true } });
-    }
+    // Idempotente: si ya se había confirmado lo mismo, no se reescribe la
+    // fecha de confirmación ni se vuelve a recalcular la quincena. El emisor
+    // reintenta hasta 10 veces, así que el mismo aviso puede llegar dos veces.
+    const yaAplicado =
+      status === "SUCCESSFUL_DELIVERY"
+        ? venta.entregaExitosa === true && venta.entregaConfirmadaAt !== null
+        : venta.cancelada === true;
+    if (yaAplicado) return res.json({ ok: true, sinCambio: true });
+
+    await aplicarResultadoEntrega(venta.id, status);
+    // Una entrega confirmada hoy puede completar un bloque de piezas de días
+    // anteriores, así que se recalcula la quincena de esa vendedora.
+    await recalcularQuincena(venta.tenantId, venta.vendedorId, venta.fecha).catch((err) =>
+      console.error("no se pudo recalcular la quincena de la venta", venta.id, err.message),
+    );
 
     res.json({ ok: true });
   } catch (err) {
