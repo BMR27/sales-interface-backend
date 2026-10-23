@@ -183,7 +183,9 @@ router.post("/leads/asignar", async (req, res) => {
 
     const result = await prisma.lead.updateMany({
       where: { id: { in: antes.map((l) => l.id) }, tenantId: req.user.tenantId },
-      data: { vendedorId: vendedor.id, asignadoPorCoordinador: true },
+      // Queda registrado quien repartio: es a esa coordinadora a la que se
+      // le acredita la comision por la venta que salga del lead.
+      data: { vendedorId: vendedor.id, asignadoPorCoordinador: true, asignadoPorId: req.user.id },
     });
 
     // El kardex necesita saber a quien se le quito el lead, no solo a quien
