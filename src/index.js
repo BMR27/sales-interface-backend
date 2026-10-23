@@ -46,6 +46,7 @@ const notificacionesRoutes = require("./routes/notificaciones");
 const parametrosRoutes = require("./routes/parametros");
 const estadisticasRoutes = require("./routes/estadisticas");
 const { startFullvectorRetryJob } = require("./jobs/fullvectorRetry");
+const { startEntregasSyncJob } = require("./jobs/entregasSync");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -146,5 +147,6 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
   startFullvectorRetryJob();
+  startEntregasSyncJob();
   startMonitoringJob();
 });

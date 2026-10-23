@@ -4,6 +4,8 @@ const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const coordinacionMiddleware = require("../middleware/coordinacion");
 const { detallarMovimiento } = require("../lib/auditoria");
+const { getParametros } = require("../lib/parametros");
+const { calcularQuincenaVendedora, calcularQuincenaCoordinadoras } = require("../lib/comisiones");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -463,6 +465,63 @@ router.post("/leads/:id/reactivar", async (req, res) => {
     });
 
     res.json({ message: "Lead regresado a la cola de asignacion", leadId: id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/coordinador/comisiones?fecha=YYYY-MM-DD
+//
+// Corte de comisiones de la quincena que contiene `fecha` (hoy si no se
+// manda): por vendedora, piezas acumuladas y bloques pagados; y la tarifa
+// por venta de cada coordinadora. Es la vista con la que se arma la nomina.
+router.get("/comisiones", async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    const fecha = req.query.fecha ? new Date(`${req.query.fecha}T12:00:00`) : new Date();
+    if (Number.isNaN(fecha.getTime())) return res.status(400).json({ error: "fecha invalida" });
+
+    const params = await getParametros(tenantId);
+    const vendedoras = await prisma.user.findMany({
+      where: { tenantId, rol: "VENDEDOR" },
+      select: { id: true, nombre: true, activo: true },
+      orderBy: { nombre: "asc" },
+    });
+
+    const porVendedora = [];
+    for (const v of vendedoras) {
+      const q = await calcularQuincenaVendedora(tenantId, v.id, fecha, params);
+      // Una vendedora sin movimiento en la quincena no ensucia el corte.
+      if (q.ventas.length === 0) continue;
+      porVendedora.push({
+        id: v.id,
+        nombre: v.nombre,
+        activo: v.activo,
+        piezas: q.piezas,
+        bloques: q.bloques,
+        sobrantes: q.sobrantes,
+        comision: q.comision,
+        piezasSinConfirmar: q.ventas.filter((d) => !d.cuenta).reduce((s, d) => s + d.piezas, 0),
+        ventas: q.ventas,
+      });
+    }
+
+    const coordinacion = await calcularQuincenaCoordinadoras(tenantId, fecha, params);
+
+    res.json({
+      quincena: coordinacion.quincena,
+      reglas: {
+        porBloque: params.comisionBloquePiezas,
+        importeBloque: params.comisionBloqueMonto,
+        tarifaCoordinadora: params.comisionCoordinadoraPorVenta,
+        metaDiariaUnidades: params.metaDiariaUnidades,
+      },
+      vendedoras: porVendedora.sort((a, b) => b.comision - a.comision || b.piezas - a.piezas),
+      totalVendedoras: porVendedora.reduce((s, v) => s + v.comision, 0),
+      coordinacion,
+      totalGeneral: porVendedora.reduce((s, v) => s + v.comision, 0) + coordinacion.total,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

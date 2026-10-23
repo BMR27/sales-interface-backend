@@ -300,6 +300,99 @@ async function syncVentaToFullVector(ventaId, options = {}) {
   }
 }
 
+// Trae de FullVector las órdenes que están en un estatus dado. Se pagina
+// porque su API tope es de 100 por página.
+async function listarOrdenesPorEstatus(estatus) {
+  const encontradas = [];
+  for (let page = 1; page <= 50; page++) {
+    const qs = new URLSearchParams({
+      status: estatus,
+      clientCode: CLIENT_CODE,
+      page: String(page),
+      pageSize: "100",
+    });
+    const resp = await authedFetch(`/api/v1/orders?${qs.toString()}`, { method: "GET" });
+    if (!resp.ok) throw new Error(`FullVector respondió ${resp.status} al listar órdenes ${estatus}`);
+    const body = await resp.json();
+    const lote = body?.data || [];
+    encontradas.push(...lote);
+    const total = body?.meta?.total ?? body?.total ?? 0;
+    if (lote.length < 100 || encontradas.length >= total) break;
+  }
+  return encontradas;
+}
+
+// La entrega la dicta FullVector, no nosotros: una venta se da por entregada
+// cuando su orden llega a SUCCESSFUL_DELIVERY allá. Eso es lo que habilita el
+// pago de comisión (ver src/lib/comisiones.js). UNSUCCESSFUL_DELIVERY marca
+// la venta como cancelada para que reste unidades del acumulado.
+//
+// Se recalcula la quincena de cada vendedora tocada, porque una entrega
+// confirmada hoy puede completar un bloque de piezas de días anteriores.
+async function sincronizarEntregas() {
+  if (!isEnabled()) return { entregadas: 0, canceladas: 0 };
+
+  const { recalcularQuincena } = require("./comisiones");
+
+  const pendientes = await prisma.venta.findMany({
+    where: {
+      fullvectorSyncStatus: "SYNCED",
+      fullvectorOrderId: { not: null },
+      cancelada: false,
+      OR: [{ entregaExitosa: false }, { entregaConfirmadaAt: null }],
+    },
+    select: { id: true, fullvectorOrderId: true, tenantId: true, vendedorId: true, fecha: true, entregaExitosa: true },
+  });
+  if (pendientes.length === 0) return { entregadas: 0, canceladas: 0 };
+
+  const porOrderId = new Map(pendientes.map((v) => [v.fullvectorOrderId, v]));
+  const tocadas = new Map();
+  let entregadas = 0;
+  let canceladas = 0;
+
+  for (const [estatus, campo] of [
+    ["SUCCESSFUL_DELIVERY", "entregada"],
+    ["UNSUCCESSFUL_DELIVERY", "cancelada"],
+  ]) {
+    let ordenes;
+    try {
+      ordenes = await listarOrdenesPorEstatus(estatus);
+    } catch (err) {
+      console.error("no se pudieron listar las ordenes", estatus, err.message);
+      continue;
+    }
+
+    for (const orden of ordenes) {
+      const venta = porOrderId.get(orden.id);
+      if (!venta) continue;
+
+      await prisma.venta.update({
+        where: { id: venta.id },
+        data:
+          campo === "entregada"
+            ? { entregaExitosa: true, entregaConfirmadaAt: new Date(), entregaConfirmadaPor: "FullVector" }
+            : {
+                entregaExitosa: false,
+                cancelada: true,
+                canceladaAt: new Date(),
+                canceladaMotivo: "FullVector reportó entrega no exitosa",
+              },
+      });
+      if (campo === "entregada") entregadas += 1;
+      else canceladas += 1;
+      tocadas.set(`${venta.tenantId}:${venta.vendedorId}:${venta.fecha.toISOString()}`, venta);
+    }
+  }
+
+  for (const v of tocadas.values()) {
+    await recalcularQuincena(v.tenantId, v.vendedorId, v.fecha).catch((err) =>
+      console.error("no se pudo recalcular la quincena de la venta", v.id, err.message),
+    );
+  }
+
+  return { entregadas, canceladas };
+}
+
 // Consulta si un CP/colonia está cubierto por FullVector -- usado para
 // decidir el costo de envío (ver src/lib/shippingCost.js). Devuelve null
 // (no true/false) cuando no se pudo verificar, para que el llamador no
@@ -322,6 +415,7 @@ async function checkCoverage(postalCode, neighborhood) {
 module.exports = {
   isEnabled,
   syncVentaToFullVector,
+  sincronizarEntregas,
   buscarOrdenPorFolio,
   checkCoverage,
   PermanentSyncError,

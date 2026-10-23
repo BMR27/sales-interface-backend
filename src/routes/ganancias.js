@@ -2,6 +2,7 @@ const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { syncVentaToFullVector } = require("../lib/fullvector");
+const { calcularQuincenaVendedora, recalcularQuincena } = require("../lib/comisiones");
 const { getParametros } = require("../lib/parametros");
 
 const router = express.Router();
@@ -31,10 +32,28 @@ router.get("/", authMiddleware, async (req, res) => {
 
     const { comisionPorcentaje, metaMensual } = await getParametros(req.user.tenantId);
 
+    // Lo que de verdad le importa a la vendedora con el modelo por bloques:
+    // cuantas piezas lleva en la quincena, cuantos bloques pago eso y
+    // cuantas piezas le faltan para el siguiente bloque.
+    const quincena = await calcularQuincenaVendedora(req.user.tenantId, vendedorId, new Date());
+
     res.json({
       hoy: { monto: hoy._sum.monto || 0, comision: hoy._sum.comision || 0 },
       semana: { monto: semana._sum.monto || 0, comision: semana._sum.comision || 0 },
       mes: { monto: mes._sum.monto || 0, comision: mes._sum.comision || 0 },
+      quincena: {
+        etiqueta: quincena.quincena.etiqueta,
+        piezas: quincena.piezas,
+        bloques: quincena.bloques,
+        sobrantes: quincena.sobrantes,
+        faltanParaBloque: quincena.sobrantes === 0 ? quincena.porBloque : quincena.porBloque - quincena.sobrantes,
+        comision: quincena.comision,
+        porBloque: quincena.porBloque,
+        importeBloque: quincena.importeBloque,
+        // Piezas vendidas que todavia no pagan porque FullVector no confirma
+        // la entrega: es la pregunta numero uno cuando el numero no cuadra.
+        piezasSinConfirmar: quincena.ventas.filter((v) => !v.cuenta).reduce((s, v) => s + v.piezas, 0),
+      },
       metaMensual,
       comisionPorcentaje,
       recientes: recientes.map(v => ({
@@ -54,7 +73,7 @@ router.get("/", authMiddleware, async (req, res) => {
 // POST /api/ganancias/venta — registrar venta cerrada
 router.post("/venta", authMiddleware, async (req, res) => {
   try {
-    const { leadId, monto, costoEnvio, folio, entregaExitosa } = req.body;
+    const { leadId, monto, costoEnvio, folio } = req.body;
     if (!leadId || !monto) {
       return res.status(400).json({ error: "leadId y monto requeridos" });
     }
@@ -67,14 +86,15 @@ router.post("/venta", authMiddleware, async (req, res) => {
       return res.status(409).json({ error: "Este lead ya tiene una venta registrada" });
     }
 
-    const { comisionPorcentaje } = await getParametros(req.user.tenantId);
-    const comision = monto * (comisionPorcentaje / 100);
-
+    // La comision se calcula por bloques de piezas sobre la quincena (ver
+    // src/lib/comisiones.js), no como porcentaje de esta venta: nace en 0 y
+    // la recalcula recalcularQuincena mas abajo. `entregaExitosa` tampoco se
+    // acepta del cliente -- la entrega la confirma FullVector.
     let venta = await prisma.venta.create({
       data: {
-        leadId, vendedorId: req.user.id, monto, comision,
+        leadId, vendedorId: req.user.id, monto, comision: 0,
         costoEnvio: Number(costoEnvio) || 0,
-        folio: folio || null, entregaExitosa: entregaExitosa || false,
+        folio: folio || null,
         tenantId: req.user.tenantId,
       },
     });
@@ -135,6 +155,12 @@ router.post("/venta", authMiddleware, async (req, res) => {
         ]);
       }
     }
+
+    // La pieza recien vendida puede completar un bloque de dias anteriores:
+    // se recalcula la quincena completa de la vendedora.
+    await recalcularQuincena(req.user.tenantId, req.user.id, venta.fecha).catch((err) => {
+      console.error("no se pudo recalcular la comision de la quincena", err);
+    });
 
     syncVentaToFullVector(venta.id).catch((err) => {
       console.error("fullvector sync error, venta", venta.id, err);

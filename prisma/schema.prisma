@@ -26,6 +26,7 @@ model User {
   ventas           Venta[]
   llamadas         Llamada[]
   tenantsAprobados Tenant[]  @relation("TenantAprobadoPor")
+  leadsAsignados   Lead[]    @relation("LeadAsignadoPor")
   apiKeysCreadas   ApiKey[]  @relation("ApiKeyCreadaPor")
 
   @@map("users")
@@ -165,6 +166,11 @@ model Lead {
 
   fechaReagenda          DateTime?
   asignadoPorCoordinador Boolean   @default(false)
+  // Coordinadora que repartio este lead. Es la que cobra los $12 de la venta
+  // que salga de el (ver src/lib/comisiones.js); null cuando lo asigno el
+  // reparto automatico y entonces el credito se divide entre las activas.
+  asignadoPorId          Int?
+  asignadoPor            User?     @relation("LeadAsignadoPor", fields: [asignadoPorId], references: [id])
 
   // Un lead que la vendedora devuelve a la cola al cerrar su turno porque el
   // cliente no contesto. Se guarda quien lo devolvio y por que para que la
@@ -216,7 +222,17 @@ model Venta {
   // (y lo que se manda a FullVector como orderValue) es monto+costoEnvio.
   costoEnvio     Float    @default(0)
   folio          String?
+  // Entrega realmente confirmada. Es la condición para pagar comisión (ver
+  // src/lib/comisiones.js): hasta que alguien la confirma, la venta no suma
+  // unidades. Antes se guardaba en true al cerrar la venta, así que no
+  // distinguía nada.
   entregaExitosa Boolean  @default(false)
+  entregaConfirmadaAt  DateTime?
+  entregaConfirmadaPor String?
+  // Cancelada o devuelta: resta sus unidades del acumulado de la quincena.
+  cancelada       Boolean   @default(false)
+  canceladaAt     DateTime?
+  canceladaMotivo String?
   fecha          DateTime @default(now())
   createdAt      DateTime @default(now())
 
