@@ -298,14 +298,92 @@ router.get("/ventas", async (req, res) => {
       where,
       orderBy: { fecha: "desc" },
       include: {
-        lead: { select: { nombre: true, producto: true, folio: true } },
+        lead: { select: { nombre: true, producto: true, folio: true, telefono: true, zipCode: true } },
         vendedor: { select: { id: true, nombre: true } },
       },
     });
 
     const total = ventas.reduce((s, v) => s + v.monto, 0);
 
-    res.json({ ventas, total });
+    // El filtro de la pantalla es "vendedores": sólo el rol VENDEDOR. Antes
+    // se llenaba con /api/admin/vendedores, que devuelve todos los usuarios
+    // del espacio -- ahí salían admins, coordinadoras y proveedores de leads,
+    // que nunca pueden aparecer en la columna Vendedor de esta tabla.
+    const vendedoresDelEspacio = await prisma.user.findMany({
+      where: { tenantId: req.user.tenantId, rol: "VENDEDOR" },
+      orderBy: { nombre: "asc" },
+      select: { id: true, nombre: true, activo: true },
+    });
+
+    // El desglose por vendedora se calcula sobre TODAS las ventas del rango,
+    // no sobre `ventas` (que puede venir filtrado a una sola persona): si no,
+    // al elegir a alguien su participación saldría siempre 100%.
+    const whereRango = { tenantId: req.user.tenantId, ...(where.fecha ? { fecha: where.fecha } : {}) };
+    const agregadoPorVendedor = await prisma.venta.groupBy({
+      by: ["vendedorId"],
+      where: whereRango,
+      _sum: { monto: true, comision: true },
+      _count: true,
+    });
+    const montoGlobal = agregadoPorVendedor.reduce((s, r) => s + (r._sum.monto || 0), 0);
+
+    const nombrePorId = new Map(vendedoresDelEspacio.map((v) => [v.id, v]));
+    const porVendedor = agregadoPorVendedor
+      .map((r) => {
+        const monto = r._sum.monto || 0;
+        return {
+          id: r.vendedorId,
+          // Una venta vieja puede apuntar a alguien que ya no es VENDEDOR (o
+          // que se dio de baja): se muestra igual, el dinero existió.
+          nombre: nombrePorId.get(r.vendedorId)?.nombre || "Usuario dado de baja",
+          activo: nombrePorId.get(r.vendedorId)?.activo ?? false,
+          ventas: r._count,
+          monto,
+          comision: r._sum.comision || 0,
+          ticket: r._count > 0 ? Math.round(monto / r._count) : 0,
+          participacion: montoGlobal > 0 ? Math.round((monto / montoGlobal) * 100) : 0,
+        };
+      })
+      .sort((a, b) => b.monto - a.monto);
+
+    // Serie diaria del conjunto filtrado, para la gráfica.
+    const serie = new Map();
+    for (const v of ventas) {
+      const dia = new Date(v.fecha).toISOString().slice(0, 10);
+      const e = serie.get(dia) || { dia, monto: 0, ventas: 0, comision: 0 };
+      e.monto += v.monto;
+      e.comision += v.comision;
+      e.ventas += 1;
+      serie.set(dia, e);
+    }
+
+    const porProducto = new Map();
+    for (const v of ventas) {
+      const nombre = v.lead?.producto || "Sin producto";
+      const e = porProducto.get(nombre) || { producto: nombre, ventas: 0, monto: 0 };
+      e.ventas += 1;
+      e.monto += v.monto;
+      porProducto.set(nombre, e);
+    }
+
+    res.json({
+      ventas,
+      total,
+      resumen: {
+        count: ventas.length,
+        monto: total,
+        comision: ventas.reduce((s, v) => s + v.comision, 0),
+        envio: ventas.reduce((s, v) => s + (v.costoEnvio || 0), 0),
+        ticket: ventas.length > 0 ? Math.round(total / ventas.length) : 0,
+        entregadas: ventas.filter((v) => v.entregaExitosa).length,
+        prepago: ventas.filter((v) => v.fullvectorSinCobertura).length,
+        sinSincronizar: ventas.filter((v) => v.fullvectorSyncStatus !== "SYNCED").length,
+      },
+      porVendedor,
+      vendedores: vendedoresDelEspacio,
+      serie: Array.from(serie.values()).sort((a, b) => a.dia.localeCompare(b.dia)),
+      topProductos: Array.from(porProducto.values()).sort((a, b) => b.monto - a.monto).slice(0, 6),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
