@@ -28,6 +28,8 @@ model User {
   tenantsAprobados Tenant[]  @relation("TenantAprobadoPor")
   leadsAsignados   Lead[]    @relation("LeadAsignadoPor")
   apiKeysCreadas   ApiKey[]  @relation("ApiKeyCreadaPor")
+  notificaciones   Notificacion[]
+  sesiones         Sesion[]
 
   @@map("users")
 }
@@ -86,6 +88,7 @@ model Tenant {
   leadItems     LeadItem[]
   rolePermisos  RolePermiso[]
   auditLogs     AuditLog[]
+  notificaciones Notificacion[]
 
   @@map("tenants")
 }
@@ -392,6 +395,63 @@ model AppSetting {
 
   @@unique([tenantId, key])
   @@map("app_settings")
+}
+
+// Avisos dentro de la app (la campana), distintos de los correos que manda
+// src/lib/notificaciones.js: estos son por persona y se leen en pantalla.
+//
+// `clave` es lo que evita que el mismo hito se avise dos veces: los avisos
+// derivados (meta al 50%, bloque de comision cerrado, motivacion del dia) se
+// recalculan en cada consulta, asi que se insertan con una clave unica por
+// usuario y, si ya existe, no se vuelve a crear. Los avisos de evento (un
+// lead recien asignado) van sin clave: cada uno es uno nuevo.
+model Notificacion {
+  id        Int                   @id @default(autoincrement())
+  tenantId  Int?
+  tenant    Tenant?               @relation(fields: [tenantId], references: [id])
+  userId    Int
+  user      User                  @relation(fields: [userId], references: [id])
+  tipo      String
+  categoria NotificacionCategoria @default(INFO)
+  titulo    String
+  mensaje   String
+  enlace    String?
+  clave     String?
+  leidaAt   DateTime?
+  createdAt DateTime              @default(now())
+
+  @@unique([userId, clave])
+  @@index([userId, createdAt])
+  @@map("notificaciones")
+}
+
+enum NotificacionCategoria {
+  INFO
+  EXITO
+  ALERTA
+  MOTIVACION
+  LOGRO
+}
+
+// Sesiones activas. Existen para poder exigir una sola sesion por usuario:
+// el token lleva el id de la sesion (`sid`) y el middleware la revisa, de
+// modo que revocar la fila invalida el token aunque todavia no expire.
+model Sesion {
+  id          String    @id
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id])
+  tenantId    Int?
+  dispositivo String?
+  userAgent   String?
+  ip          String?
+  createdAt   DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  motivo      String?
+
+  @@index([userId, revokedAt])
+  @@map("sesiones")
 }
 
 // Permisos granulares por rol dentro de un tenant. La ausencia de una fila

@@ -6,6 +6,7 @@ const coordinacionMiddleware = require("../middleware/coordinacion");
 const { detallarMovimiento } = require("../lib/auditoria");
 const { getParametros } = require("../lib/parametros");
 const { calcularQuincenaVendedora, calcularQuincenaCoordinadoras } = require("../lib/comisiones");
+const { crearAviso, crearAvisos } = require("../lib/avisos");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -201,6 +202,33 @@ router.post("/leads/asignar", async (req, res) => {
       },
       despues: { vendedor: vendedor.nombre, leads: antes.map((l) => l.id) },
     });
+
+    // La vendedora se entera de que le cayó trabajo sin tener que recargar
+    // la cola. Un aviso por lead cuando son pocos; uno solo cuando es un
+    // lote, para no llenarle la campana de veinte líneas iguales.
+    if (antes.length <= 3) {
+      crearAvisos(
+        antes.map((l) => ({
+          userId: vendedor.id,
+          tenantId: req.user.tenantId,
+          tipo: "lead.asignado",
+          categoria: "INFO",
+          titulo: "Nuevo lead asignado",
+          mensaje: `${l.nombre} está en tu cola, asignado por ${req.user.nombre}.`,
+          enlace: "/leads",
+        })),
+      );
+    } else {
+      crearAviso({
+        userId: vendedor.id,
+        tenantId: req.user.tenantId,
+        tipo: "lead.asignado",
+        categoria: "INFO",
+        titulo: `${antes.length} leads nuevos en tu cola`,
+        mensaje: `${req.user.nombre} te asignó ${antes.length} leads. Empieza por los más recientes.`,
+        enlace: "/leads",
+      });
+    }
 
     const sinAsignar = await prisma.lead.count({
       where: { tenantId: req.user.tenantId, vendedorId: null },

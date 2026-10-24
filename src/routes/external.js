@@ -4,6 +4,7 @@ const { apiKeyMiddleware } = require("../middleware/apiKey");
 const { getNextVendedor } = require("../lib/assignment");
 const { getParametros } = require("../lib/parametros");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
+const { crearAviso } = require("../lib/avisos");
 const { detallarMovimiento } = require("../lib/auditoria");
 const { aplicarResultadoEntrega } = require("../lib/fullvector");
 const { recalcularQuincena } = require("../lib/comisiones");
@@ -157,6 +158,20 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
     });
 
     notificarLeadNuevo(lead, { vendedor, origen: "api_externa" });
+
+    // Con reparto automático el lead aparece en la cola de alguien sin que
+    // nadie se lo haya dicho; el aviso en pantalla es lo que lo hace visible.
+    if (vendedor) {
+      crearAviso({
+        userId: vendedor.id,
+        tenantId,
+        tipo: "lead.asignado",
+        categoria: "INFO",
+        titulo: "Nuevo lead asignado",
+        mensaje: `${lead.nombre} entró a tu cola — ${lead.producto}.`,
+        enlace: "/leads",
+      });
+    }
 
     res.status(201).json({
       received: true,

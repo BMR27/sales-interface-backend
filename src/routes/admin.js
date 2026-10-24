@@ -9,6 +9,7 @@ const { getNextVendedor } = require("../lib/assignment");
 const { parseWorkbookBuffer, validateRow, buildTemplateBuffer } = require("../lib/leadsImport");
 const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
 const { notificarLeadsImportados } = require("../lib/notificaciones");
+const { crearAvisos } = require("../lib/avisos");
 const { getParametros } = require("../lib/parametros");
 const { detallarMovimiento } = require("../lib/auditoria");
 
@@ -210,6 +211,27 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
     // Un solo correo por carga: un Excel de 500 leads no puede convertirse
     // en 500 avisos (ver src/lib/notificaciones.js).
     notificarLeadsImportados(tenantId, leadsCreados, { importadoPor: req.user.nombre || req.user.email });
+
+    // Y un solo aviso en pantalla por vendedora, con su total: el mismo
+    // criterio del correo aplicado a la campana.
+    const porVendedora = new Map();
+    for (const lead of leadsCreados) {
+      if (!lead.vendedorId) continue;
+      porVendedora.set(lead.vendedorId, (porVendedora.get(lead.vendedorId) || 0) + 1);
+    }
+    if (porVendedora.size > 0) {
+      crearAvisos(
+        Array.from(porVendedora, ([userId, cuantos]) => ({
+          userId,
+          tenantId,
+          tipo: "lead.asignado",
+          categoria: "INFO",
+          titulo: cuantos === 1 ? "Nuevo lead asignado" : `${cuantos} leads nuevos en tu cola`,
+          mensaje: `Se cargaron ${cuantos === 1 ? "un lead" : `${cuantos} leads`} a tu nombre.`,
+          enlace: "/leads",
+        })),
+      );
+    }
 
     res.status(201).json(resultados);
   } catch (err) {

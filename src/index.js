@@ -43,6 +43,7 @@ const publicRoutes = require("./routes/public");
 const brandingRoutes = require("./routes/branding");
 const kardexRoutes = require("./routes/kardex");
 const notificacionesRoutes = require("./routes/notificaciones");
+const avisosRoutes = require("./routes/avisos");
 const parametrosRoutes = require("./routes/parametros");
 const estadisticasRoutes = require("./routes/estadisticas");
 const { startFullvectorRetryJob } = require("./jobs/fullvectorRetry");
@@ -113,6 +114,10 @@ app.get("/health", (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+// La campana de cada usuario. Va antes de /api/admin/notificaciones (que es
+// la configuración de los correos) porque son cosas distintas con nombres
+// parecidos: esta es la de todos, aquélla sólo del admin.
+app.use("/api/notificaciones", avisosRoutes);
 app.use("/api/leads", leadsRoutes);
 app.use("/api/llamada", llamadaRoutes);
 app.use("/api/ganancias", gananciasRoutes);

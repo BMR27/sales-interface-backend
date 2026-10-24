@@ -4,6 +4,7 @@ const authMiddleware = require("../middleware/auth");
 const { syncVentaToFullVector } = require("../lib/fullvector");
 const { calcularQuincenaVendedora, recalcularQuincena } = require("../lib/comisiones");
 const { getParametros } = require("../lib/parametros");
+const { crearAviso } = require("../lib/avisos");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -165,6 +166,20 @@ router.post("/venta", authMiddleware, async (req, res) => {
     syncVentaToFullVector(venta.id).catch((err) => {
       console.error("fullvector sync error, venta", venta.id, err);
     });
+
+    // A la coordinadora que repartió este lead le interesa saber que
+    // convirtió: es su comisión y es la señal de que repartió bien.
+    if (lead.asignadoPorId && lead.asignadoPorId !== req.user.id) {
+      crearAviso({
+        userId: lead.asignadoPorId,
+        tenantId: req.user.tenantId,
+        tipo: "venta.convertida",
+        categoria: "EXITO",
+        titulo: "Un lead que asignaste se convirtió",
+        mensaje: `${req.user.nombre} cerró la venta de ${lead.nombre} por $${Math.round(monto).toLocaleString("es-MX")}.`,
+        enlace: "/coordinador/progreso",
+      });
+    }
 
     res.status(201).json(venta);
   } catch (err) {
