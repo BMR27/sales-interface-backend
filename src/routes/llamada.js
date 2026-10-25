@@ -3,6 +3,7 @@ const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { requirePermiso } = require("../lib/permisosCatalog");
 const { registrarResultado } = require("../lib/historialLlamadas");
+const { ocultarTelefonoLead } = require("../lib/telefono");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -28,7 +29,9 @@ router.get("/:id", authMiddleware, async (req, res) => {
     });
 
     res.json({
-      lead,
+      // El numero completo no sale del servidor: el marcador manda el id del
+      // lead y el webhook de TwiML resuelve a que numero llamar.
+      lead: ocultarTelefonoLead(lead, req.user.rol),
       // Un lead con venta cerrada se puede consultar pero no volver a
       // vender: la dirección y la ubicación compartida se siguen
       // necesitando a la vista para completar el envío. Quien bloquea de

@@ -7,6 +7,7 @@ const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
 const { LEAD_STATUSES, LEAD_STATUSES_ABIERTOS, parseLeadStatus } = require("../lib/leadStatus");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
 const { registrarResultado, historialDeLead } = require("../lib/historialLlamadas");
+const { ocultarTelefonoLead, ocultarTelefonoLeads, ocultaTelefono } = require("../lib/telefono");
 const { detallarMovimiento } = require("../lib/auditoria");
 
 const router = express.Router();
@@ -50,7 +51,8 @@ router.get("/", authMiddleware, async (req, res) => {
     });
 
     res.json({
-      leads,
+      // La vendedora solo ve los ultimos 4 digitos (ver src/lib/telefono.js).
+      leads: ocultarTelefonoLeads(leads, req.user.rol),
       counts: counts.reduce((acc, c) => ({ ...acc, [c.status]: c._count }), {}),
       totalVentas: totalMonto._sum.monto || 0,
     });
@@ -67,7 +69,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
       where: { id: parseInt(req.params.id), vendedorId: req.user.id },
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
-    res.json(lead);
+    res.json(ocultarTelefonoLead(lead, req.user.rol));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
@@ -98,7 +100,7 @@ router.post("/", authMiddleware, async (req, res) => {
     // el alta si el correo falla (ver src/lib/notificaciones.js).
     notificarLeadNuevo(lead, { vendedor: req.user, origen: "web" });
 
-    res.status(201).json(lead);
+    res.status(201).json(ocultarTelefonoLead(lead, req.user.rol));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
@@ -124,8 +126,12 @@ router.put("/:id", authMiddleware, async (req, res) => {
     const lead = await prisma.lead.update({
       where: { id },
       data: {
-        nombre, telefono, producto, cantidad, hora, status, folio, monto, categoria, notas,
+        nombre, producto, cantidad, hora, status, folio, monto, categoria, notas,
         shippingStreet, shippingNumber, shippingReferences, zipCode, state, colonia, municipio, lat, lng,
+        // Quien no puede VER el telefono tampoco puede escribirlo. Sin esta
+        // guarda, una pantalla que reenviara el valor que recibio grabaria
+        // el enmascarado encima del numero real y lo destruiria.
+        ...(ocultaTelefono(req.user.rol) ? {} : { telefono }),
       },
     });
 
@@ -163,7 +169,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
       despues: lead,
     });
 
-    res.json(lead);
+    res.json(ocultarTelefonoLead(lead, req.user.rol));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

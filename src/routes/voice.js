@@ -36,8 +36,13 @@ router.get("/grabacion-activa", authMiddleware, async (req, res) => {
 
 // POST /api/voice/twiml — webhook de Twilio (sin JWT, verificado por firma) que marca al lead
 router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
-  const to = req.body.To;
   const callSid = req.body.CallSid;
+  // A que numero se marca lo decide el servidor, NO el navegador. Antes
+  // venia en `To` desde el cliente; ahora la vendedora ya no conoce el
+  // telefono completo (solo los ultimos 4 digitos, ver src/lib/telefono.js)
+  // y mandarselo para que lo reenviara habria hecho inutil el ocultamiento.
+  // Se resuelve del lead, que ademas es la unica fuente confiable.
+  let to = null;
 
   // Quién llama sale del `From`, que deriva de la identidad del Access
   // Token; el leadId viaja por el navegador, así que sólo se acepta si de
@@ -59,9 +64,12 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
       const lead = Number.isInteger(leadIdCrudo)
         ? await prisma.lead.findFirst({
             where: { id: leadIdCrudo, vendedorId: vendedor.id },
-            select: { id: true, status: true },
+            select: { id: true, status: true, telefono: true },
           })
         : null;
+
+      // Solo se marca a un lead que de verdad es de quien llama.
+      if (lead) to = lead.telefono;
 
       // El intento queda registrado SIEMPRE, se grabe o no: el historial de
       // "cuántas veces se le ha llamado" no puede depender de un parámetro
@@ -99,10 +107,22 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
     grabar = false;
   }
 
+  res.type("text/xml");
+
+  // Sin lead resoluble no hay a quién marcar: puede ser un lead que ya no es
+  // de esa vendedora, o un leadId manipulado. Antes el número venía del
+  // navegador y esto no podía pasar; ahora hay que decirlo en vez de marcar
+  // a un número vacío, que Twilio intentaría igual.
+  if (!to) {
+    console.error("no se pudo resolver a quién marcar", { callSid, from: req.body.From });
+    return res.send(
+      '<Response><Say language="es-MX" voice="Polly.Mia">No se pudo iniciar la llamada. Vuelve a intentarlo desde el panel.</Say></Response>',
+    );
+  }
+
   const base = process.env.BACKEND_PUBLIC_URL;
   const statusCallbackUrl = base ? `${base}/api/voice/grabacion-status` : null;
 
-  res.type("text/xml");
   res.send(
     buildDialTwiml(to, {
       // Sin BACKEND_PUBLIC_URL no hay webhook al que Twilio pueda avisar

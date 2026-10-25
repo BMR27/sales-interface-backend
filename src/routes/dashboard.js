@@ -3,6 +3,7 @@ const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
 const { getParametros } = require("../lib/parametros");
+const { ocultarTelefonoLeads } = require("../lib/telefono");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -35,7 +36,7 @@ router.get("/", authMiddleware, async (req, res) => {
         porcentajeMeta: Math.round((ventasHoy / metaDiaria) * 100),
         conversion: ventasHoy > 0 ? Math.round((entregasExitosas / ventasHoy) * 100) : 0,
       },
-      leads,
+      leads: ocultarTelefonoLeads(leads, req.user.rol),
     });
   } catch (err) {
     console.error(err);
