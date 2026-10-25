@@ -36,11 +36,16 @@ function normalizePhoneNumber(raw) {
 // La llamada NO lleva aviso hablado: el consentimiento viene con el lead.
 // Eso también significa que no hay nada entre el "bueno" del cliente y la
 // vendedora: la llamada se conecta igual de rápido que sin grabar.
-function buildDialTwiml(toNumber, { grabar = false, statusCallbackUrl = null } = {}) {
+// `accionUrl` es el webhook que Twilio llama cuando el <Dial> termina, con
+// DialCallStatus y DialCallDuration. Es la unica fuente que dice si el
+// cliente llego a contestar, y vale para toda llamada -- grabada o no --
+// porque el aviso de grabacion solo existe cuando hay audio.
+function buildDialTwiml(toNumber, { grabar = false, statusCallbackUrl = null, accionUrl = null } = {}) {
   const twiml = new VoiceResponse();
 
   const dial = twiml.dial({
     callerId: process.env.TWILIO_CALLER_ID,
+    ...(accionUrl ? { action: accionUrl, method: "POST" } : {}),
     ...(grabar
       ? {
           record: "record-from-answer-dual",

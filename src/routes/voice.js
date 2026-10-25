@@ -4,6 +4,7 @@ const authMiddleware = require("../middleware/auth");
 const twilioSignatureMiddleware = require("../middleware/twilioSignature");
 const { generateVoiceToken, buildDialTwiml, vendedorIdDesdeFrom } = require("../lib/twilioVoice");
 const { getParametros } = require("../lib/parametros");
+const { registrarIntento, registrarDesenlace } = require("../lib/historialLlamadas");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -51,18 +52,31 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
       ? await prisma.user.findUnique({ where: { id: vendedorId }, select: { id: true, tenantId: true } })
       : null;
 
-    if (vendedor?.tenantId) {
+    if (vendedor?.tenantId && callSid) {
       const params = await getParametros(vendedor.tenantId);
       grabar = params.grabacionLlamadas;
 
-      if (grabar && callSid) {
-        const lead = Number.isInteger(leadIdCrudo)
-          ? await prisma.lead.findFirst({
-              where: { id: leadIdCrudo, vendedorId: vendedor.id },
-              select: { id: true },
-            })
-          : null;
+      const lead = Number.isInteger(leadIdCrudo)
+        ? await prisma.lead.findFirst({
+            where: { id: leadIdCrudo, vendedorId: vendedor.id },
+            select: { id: true, status: true },
+          })
+        : null;
 
+      // El intento queda registrado SIEMPRE, se grabe o no: el historial de
+      // "cuántas veces se le ha llamado" no puede depender de un parámetro
+      // de grabación que la empresa puede tener apagado.
+      if (lead) {
+        await registrarIntento({
+          leadId: lead.id,
+          vendedorId: vendedor.id,
+          tenantId: vendedor.tenantId,
+          callSid,
+          estadoAntes: lead.status,
+        });
+      }
+
+      if (grabar) {
         // La fila nace aquí, con lo único que se sabe al arrancar: a quién
         // corresponde la llamada. El RecordingSid llega después, por el
         // webhook de grabación.
@@ -79,9 +93,9 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
       }
     }
   } catch (err) {
-    // Un fallo registrando la grabación no puede tumbar la llamada: se
-    // marca igual, sin grabar, y queda el error en el monitoreo.
-    console.error("no se pudo preparar la grabación de la llamada", callSid, err);
+    // Un fallo registrando no puede tumbar la llamada: se marca igual, sin
+    // grabar, y queda el error en el monitoreo.
+    console.error("no se pudo preparar el registro de la llamada", callSid, err);
     grabar = false;
   }
 
@@ -96,8 +110,44 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
       // sería cobrar almacenamiento por algo que nadie podría escuchar.
       grabar: grabar && !!statusCallbackUrl,
       statusCallbackUrl,
+      accionUrl: base ? `${base}/api/voice/llamada-fin` : null,
     }),
   );
+});
+
+// POST /api/voice/llamada-fin — Twilio avisa aquí al terminar el <Dial>,
+// con DialCallStatus y DialCallDuration. Es la única fuente que dice si el
+// cliente llegó a contestar, y llega siempre: a diferencia del webhook de
+// grabación, no depende de que haya audio.
+//
+// Devuelve TwiML vacío a propósito: si no se responde nada, Twilio sigue
+// ejecutando el documento original y la llamada no cuelga limpio.
+router.post("/llamada-fin", twilioSignatureMiddleware, async (req, res) => {
+  res.type("text/xml");
+  res.send("<Response/>");
+
+  try {
+    const { CallSid, DialCallStatus, DialCallDuration } = req.body;
+    if (!CallSid) return;
+
+    await registrarDesenlace({
+      callSid: CallSid,
+      desenlace: DialCallStatus,
+      duracion: Number(DialCallDuration),
+    });
+
+    // Una llamada que nadie contestó no va a generar audio, y su fila de
+    // grabación se quedaría en EN_CURSO para siempre aparentando que algo
+    // sigue pendiente. Aquí se cierra con el motivo real.
+    if (DialCallStatus && DialCallStatus !== "completed") {
+      await prisma.grabacionLlamada.updateMany({
+        where: { callSid: CallSid, estado: "EN_CURSO" },
+        data: { estado: "FALLIDA", error: DialCallStatus },
+      });
+    }
+  } catch (err) {
+    console.error("no se pudo registrar el fin de la llamada", err);
+  }
 });
 
 // POST /api/voice/grabacion-status — webhook de Twilio al terminar la

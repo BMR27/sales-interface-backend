@@ -569,6 +569,18 @@ model CodigoPostal {
   @@map("codigos_postales")
 }
 
+// Historial de llamadas de un lead: cada fila es un INTENTO, contestado o no.
+//
+// Antes solo se escribia al confirmar una venta o reagendar, asi que los
+// intentos donde nadie contesto no dejaban rastro y era imposible saber
+// cuantas veces se habia llamado a alguien. Ahora la fila nace cuando se
+// marca desde el panel (webhook de TwiML) y se completa en dos momentos:
+// cuando Twilio avisa como termino la llamada (si contestaron y cuanto duro)
+// y cuando la vendedora registra el resultado.
+//
+// Una llamada hecha fuera del marcador no tiene intento previo que
+// completar, asi que registrar el resultado crea la fila: el historial
+// prefiere un registro sin duracion a no registrar nada.
 model Llamada {
   id         Int      @id @default(autoincrement())
   leadId     Int
@@ -581,9 +593,24 @@ model Llamada {
   notas      String?
   fecha      DateTime @default(now())
 
+  // Identifica el intento en Twilio y lo amarra con su grabacion.
+  callSid String? @unique
+  // Como termino la llamada segun Twilio: completed, no-answer, busy, failed.
+  // null mientras no haya llegado el aviso (o si se marco fuera del panel).
+  desenlace String?
+  // Si el cliente llego a contestar. Es lo que separa "le llame 5 veces y
+  // nunca contesto" de "hable con el 5 veces".
+  contestada Boolean @default(false)
+
+  // Estatus del lead antes y despues de este intento: es lo que permite
+  // leer el historial como una historia ("estaba NUEVO, quedo REAGENDADO").
+  estadoAntes   LeadStatus?
+  estadoDespues LeadStatus?
+
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
+  @@index([leadId, fecha])
   @@map("llamadas")
 }
 

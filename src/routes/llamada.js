@@ -2,6 +2,7 @@ const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { requirePermiso } = require("../lib/permisosCatalog");
+const { registrarResultado } = require("../lib/historialLlamadas");
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -98,8 +99,19 @@ router.post("/:id/confirmar", authMiddleware, requirePermiso("vendedor.leads.con
           )
         : [];
 
-    await prisma.llamada.create({
-      data: { leadId, vendedorId: req.user.id, duracion, ofertas, resultado, notas, tenantId: req.user.tenantId },
+    // Completa el intento que creó el marcador (o crea la fila si llamó por
+    // fuera). El estatus no se mueve aquí: sigue pendiente hasta que la
+    // venta se registre, así que `estadoDespues` es el que ya tenía.
+    await registrarResultado({
+      leadId,
+      vendedorId: req.user.id,
+      tenantId: req.user.tenantId,
+      duracion,
+      ofertas,
+      resultado,
+      notas,
+      estadoAntes: lead.status,
+      estadoDespues: lead.status,
     });
 
     if (aceptoOferta && cartItems.length > 0) {
@@ -158,14 +170,14 @@ router.post("/:id/reagendar", authMiddleware, requirePermiso("vendedor.leads.rea
       return res.status(400).json({ error: "La fecha de reagenda debe ser futura" });
     }
 
-    await prisma.llamada.create({
-      data: {
-        leadId,
-        vendedorId: req.user.id,
-        resultado: "REAGENDADO",
-        notas,
-        tenantId: req.user.tenantId,
-      },
+    await registrarResultado({
+      leadId,
+      vendedorId: req.user.id,
+      tenantId: req.user.tenantId,
+      resultado: "REAGENDADO",
+      notas,
+      estadoAntes: lead.status,
+      estadoDespues: "REAGENDADO",
     });
 
     await prisma.lead.update({

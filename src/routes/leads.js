@@ -6,6 +6,7 @@ const { requirePermiso } = require("../lib/permisosCatalog");
 const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
 const { LEAD_STATUSES, LEAD_STATUSES_ABIERTOS, parseLeadStatus } = require("../lib/leadStatus");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
+const { registrarResultado, historialDeLead } = require("../lib/historialLlamadas");
 const { detallarMovimiento } = require("../lib/auditoria");
 
 const router = express.Router();
@@ -169,6 +170,34 @@ router.put("/:id", authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/leads/:id/historial — cuántas veces se ha llamado a este lead,
+// quién lo llamó, cuándo y en qué quedó cada intento.
+//
+// La vendedora solo ve el historial de sus leads; el ADMIN y la coordinadora
+// ven el de cualquiera de su empresa, que es lo que necesitan para repartir
+// sin repetir el trabajo de otra.
+router.get("/:id/historial", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const puedeVerTodos = ["ADMIN", "COORDINADOR"].includes(req.user.rol);
+
+    const lead = await prisma.lead.findFirst({
+      where: {
+        id,
+        tenantId: req.user.tenantId,
+        ...(puedeVerTodos ? {} : { vendedorId: req.user.id }),
+      },
+      select: { id: true },
+    });
+    if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
+
+    res.json(await historialDeLead(id, req.user.tenantId));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 // DELETE /api/leads/:id (descarta)
 router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"), async (req, res) => {
   try {
@@ -180,6 +209,17 @@ router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"),
     }
 
     await prisma.lead.update({ where: { id }, data: { status: "DESCARTADO" } });
+
+    // Descartar es el desenlace de una llamada: sin esto, el historial del
+    // lead mostraba el intento pero nunca en qué había terminado.
+    await registrarResultado({
+      leadId: id,
+      vendedorId: req.user.id,
+      tenantId: req.user.tenantId,
+      resultado: "DESCARTADO",
+      estadoAntes: existing.status,
+      estadoDespues: "DESCARTADO",
+    });
 
     detallarMovimiento(req, {
       entidadId: id,
@@ -226,6 +266,22 @@ router.post("/:id/devolver", authMiddleware, requirePermiso("vendedor.leads.devo
         devueltoMotivo: motivo || "No contestó durante el turno",
         devueltoPorNombre: req.user.nombre,
       },
+    });
+
+    // Devolver casi siempre es "no contestó en mi turno": queda en el
+    // historial para que la siguiente vendedora vea cuántas veces se
+    // intentó antes y no empiece de cero.
+    await registrarResultado({
+      leadId: id,
+      vendedorId: req.user.id,
+      tenantId: req.user.tenantId,
+      resultado: "DEVUELTO_A_COLA",
+      notas: lead.devueltoMotivo,
+      estadoAntes: existing.status,
+      estadoDespues: existing.status,
+      // Devolver el lead es casi siempre "no contestó": no puede contar
+      // como conversación.
+      implicaContacto: false,
     });
 
     detallarMovimiento(req, {
