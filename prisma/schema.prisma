@@ -30,6 +30,7 @@ model User {
   apiKeysCreadas   ApiKey[]  @relation("ApiKeyCreadaPor")
   notificaciones   Notificacion[]
   sesiones         Sesion[]
+  grabaciones      GrabacionLlamada[]
 
   @@map("users")
 }
@@ -89,6 +90,7 @@ model Tenant {
   rolePermisos  RolePermiso[]
   auditLogs     AuditLog[]
   notificaciones Notificacion[]
+  grabaciones   GrabacionLlamada[]
 
   @@map("tenants")
 }
@@ -186,9 +188,10 @@ model Lead {
 
   incomingLead IncomingLead?
 
-  llamadas Llamada[]
-  venta    Venta?
-  items    LeadItem[]
+  llamadas    Llamada[]
+  venta       Venta?
+  items       LeadItem[]
+  grabaciones GrabacionLlamada[]
 
   @@index([tenantId, status])
   @@map("leads")
@@ -582,6 +585,51 @@ model Llamada {
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
   @@map("llamadas")
+}
+
+// Grabacion de una llamada, para que el admin pueda escucharla despues.
+//
+// El audio NO se guarda aqui: vive en Twilio y se sirve por proxy desde
+// /api/admin/grabaciones/:id/audio, que es lo que permite exigir rol ADMIN
+// y dejar constancia en el kardex de quien escucho que. Esta tabla es el
+// indice: a que lead y a que vendedora corresponde cada grabacion.
+//
+// La fila nace en el webhook de TwiML (cuando arranca la llamada, con el
+// CallSid) y se completa en el webhook de grabacion (con el RecordingSid y
+// la duracion). Por eso `recordingSid` es opcional: entre un webhook y el
+// otro la llamada esta en curso, y si nunca llega el segundo la fila queda
+// como constancia de que esa llamada no dejo audio.
+model GrabacionLlamada {
+  id           Int       @id @default(autoincrement())
+  callSid      String    @unique
+  recordingSid String?   @unique
+  estado       GrabacionEstado @default(EN_CURSO)
+  duracion     Int?
+  grabadaAt    DateTime?
+  error        String?
+  createdAt    DateTime  @default(now())
+
+  // Opcionales porque el webhook puede llegar sin poder resolverlos (un
+  // lead borrado, un parametro manipulado): es preferible una grabacion
+  // huerfana que perder el registro de que la llamada existio.
+  leadId     Int?
+  lead       Lead? @relation(fields: [leadId], references: [id])
+  vendedorId Int?
+  vendedor   User? @relation(fields: [vendedorId], references: [id])
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([leadId])
+  @@map("grabaciones_llamadas")
+}
+
+enum GrabacionEstado {
+  EN_CURSO
+  COMPLETADA
+  FALLIDA
+  BORRADA
 }
 
 // Módulo de monitoreo (Admin): captura automática vía console.error

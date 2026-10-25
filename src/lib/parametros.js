@@ -17,6 +17,25 @@ const DEFINICION = {
       "Apagado, los leads que llegan por la API entran sin vendedora y esperan en la cola del coordinador. Encendido, se reparten solos por turnos entre las vendedoras activas.",
     grupo: "Asignación de leads",
   },
+  // Grabar llamadas nace apagado a proposito: es una decision legal de cada
+  // empresa (aviso de privacidad, consentimiento del cliente, cuanto tiempo
+  // se conserva el audio), no algo que el sistema deba dar por hecho.
+  grabacionLlamadas: {
+    tipo: "boolean",
+    default: false,
+    label: "Grabar las llamadas",
+    ayuda:
+      "Guarda el audio de cada llamada para que el administrador pueda escucharlo despues. Antes de encenderlo asegurate de que tu aviso de privacidad lo contemple: grabar sin informar al cliente te expone.",
+    grupo: "Llamadas",
+  },
+  grabacionAvisoCliente: {
+    tipo: "boolean",
+    default: true,
+    label: "Avisar al cliente que se graba",
+    ayuda:
+      "Reproduce un aviso al inicio de la llamada antes de marcar. Apagarlo solo tiene sentido si ya obtienes el consentimiento por otra via; la carga de probarlo es tuya.",
+    grupo: "Llamadas",
+  },
   comisionPorcentaje: {
     default: 15,
     min: 0,

@@ -1,9 +1,17 @@
 const express = require("express");
+const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const twilioSignatureMiddleware = require("../middleware/twilioSignature");
-const { generateVoiceToken, buildDialTwiml } = require("../lib/twilioVoice");
+const {
+  generateVoiceToken,
+  buildDialTwiml,
+  buildAvisoTwiml,
+  vendedorIdDesdeFrom,
+} = require("../lib/twilioVoice");
+const { getParametros } = require("../lib/parametros");
 
 const router = express.Router();
+const prisma = new PrismaClient();
 
 // POST /api/voice/token — el vendedor obtiene un Access Token para el Twilio Device del navegador
 router.post("/token", authMiddleware, (req, res) => {
@@ -17,11 +25,130 @@ router.post("/token", authMiddleware, (req, res) => {
   }
 });
 
+// GET /api/voice/grabacion-activa — le dice a la vendedora si su empresa
+// graba, para poder mostrarlo en el panel de llamada. Que la persona que
+// llama sepa que se la está grabando no es opcional.
+router.get("/grabacion-activa", authMiddleware, async (req, res) => {
+  try {
+    const { grabacionLlamadas, grabacionAvisoCliente } = await getParametros(req.user.tenantId);
+    res.json({ grabando: grabacionLlamadas, avisoAlCliente: grabacionLlamadas && grabacionAvisoCliente });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 // POST /api/voice/twiml — webhook de Twilio (sin JWT, verificado por firma) que marca al lead
-router.post("/twiml", twilioSignatureMiddleware, (req, res) => {
+router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
   const to = req.body.To;
+  const callSid = req.body.CallSid;
+
+  // Quién llama sale del `From`, que deriva de la identidad del Access
+  // Token; el leadId viaja por el navegador, así que sólo se acepta si de
+  // verdad es un lead de esa vendedora.
+  const vendedorId = vendedorIdDesdeFrom(req.body.From);
+  const leadIdCrudo = Number(req.body.leadId);
+
+  let grabar = false;
+  let avisar = false;
+
+  try {
+    const vendedor = vendedorId
+      ? await prisma.user.findUnique({ where: { id: vendedorId }, select: { id: true, tenantId: true } })
+      : null;
+
+    if (vendedor?.tenantId) {
+      const params = await getParametros(vendedor.tenantId);
+      grabar = params.grabacionLlamadas;
+      avisar = params.grabacionAvisoCliente;
+
+      if (grabar && callSid) {
+        const lead = Number.isInteger(leadIdCrudo)
+          ? await prisma.lead.findFirst({
+              where: { id: leadIdCrudo, vendedorId: vendedor.id },
+              select: { id: true },
+            })
+          : null;
+
+        // La fila nace aquí, con lo único que se sabe al arrancar: a quién
+        // corresponde la llamada. El RecordingSid llega después, por el
+        // webhook de grabación.
+        await prisma.grabacionLlamada.upsert({
+          where: { callSid },
+          create: {
+            callSid,
+            leadId: lead?.id ?? null,
+            vendedorId: vendedor.id,
+            tenantId: vendedor.tenantId,
+          },
+          update: {},
+        });
+      }
+    }
+  } catch (err) {
+    // Un fallo registrando la grabación no puede tumbar la llamada: se
+    // marca igual, sin grabar, y queda el error en el monitoreo.
+    console.error("no se pudo preparar la grabación de la llamada", callSid, err);
+    grabar = false;
+  }
+
+  const base = process.env.BACKEND_PUBLIC_URL;
+  const statusCallbackUrl = base ? `${base}/api/voice/grabacion-status` : null;
+  const avisoUrl = base ? `${base}/api/voice/aviso-grabacion` : null;
+
   res.type("text/xml");
-  res.send(buildDialTwiml(to));
+  res.send(
+    buildDialTwiml(to, {
+      // Sin BACKEND_PUBLIC_URL no hay webhook al que Twilio pueda avisar
+      // cuando termine la grabación: grabar sin poder registrar el audio
+      // sería cobrar almacenamiento por algo que nadie podría escuchar.
+      grabar: grabar && !!statusCallbackUrl,
+      avisar,
+      statusCallbackUrl,
+      avisoUrl,
+    }),
+  );
+});
+
+// POST /api/voice/aviso-grabacion — lo pide Twilio cuando el cliente
+// contesta, antes de unir las dos piernas: es el aviso que oye el cliente.
+router.post("/aviso-grabacion", twilioSignatureMiddleware, (req, res) => {
+  res.type("text/xml");
+  res.send(buildAvisoTwiml());
+});
+
+// POST /api/voice/grabacion-status — webhook de Twilio al terminar la
+// grabación. Completa la fila que creó /twiml con el id del audio.
+router.post("/grabacion-status", twilioSignatureMiddleware, async (req, res) => {
+  // Twilio reintenta si no respondemos rápido, y un reintento con la fila ya
+  // escrita no debe producir nada distinto: se contesta 204 siempre.
+  res.sendStatus(204);
+
+  try {
+    const { CallSid, RecordingSid, RecordingDuration, RecordingStatus } = req.body;
+    if (!CallSid) return;
+
+    const existente = await prisma.grabacionLlamada.findUnique({ where: { callSid: CallSid } });
+    if (!existente) return;
+
+    // "absent" es Twilio diciendo que no hubo audio que guardar (nadie
+    // contestó, colgaron antes): es un desenlace normal, no un error.
+    const completada = RecordingStatus === "completed" && RecordingSid;
+
+    await prisma.grabacionLlamada.update({
+      where: { callSid: CallSid },
+      data: completada
+        ? {
+            recordingSid: RecordingSid,
+            estado: "COMPLETADA",
+            duracion: Number(RecordingDuration) || null,
+            grabadaAt: new Date(),
+          }
+        : { estado: "FALLIDA", error: RecordingStatus || "sin audio" },
+    });
+  } catch (err) {
+    console.error("no se pudo guardar el estado de la grabación", err);
+  }
 });
 
 module.exports = router;
