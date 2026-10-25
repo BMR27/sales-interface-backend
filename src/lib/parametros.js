@@ -25,15 +25,17 @@ const DEFINICION = {
     default: false,
     label: "Grabar las llamadas",
     ayuda:
-      "Guarda el audio de cada llamada para que el administrador pueda escucharlo despues. Antes de encenderlo asegurate de que tu aviso de privacidad lo contemple: grabar sin informar al cliente te expone.",
+      "Guarda el audio de cada llamada, desde que el cliente contesta, para que el administrador pueda escucharlo despues. La llamada no lleva aviso hablado: el consentimiento viene con el lead, y poder probarlo es responsabilidad de la empresa.",
     grupo: "Llamadas",
   },
-  grabacionAvisoCliente: {
-    tipo: "boolean",
-    default: true,
-    label: "Avisar al cliente que se graba",
+  grabacionDiasRetencion: {
+    default: 15,
+    min: 1,
+    max: 365,
+    label: "Dias que se conservan las grabaciones",
+    sufijo: "dias",
     ayuda:
-      "Reproduce un aviso al inicio de la llamada antes de marcar. Apagarlo solo tiene sentido si ya obtienes el consentimiento por otra via; la carga de probarlo es tuya.",
+      "Pasado este plazo el audio se borra solo de Twilio y queda unicamente el registro de que la llamada existio. Conservar de mas cuesta almacenamiento y amplia lo que tendrias que entregar ante una solicitud de datos.",
     grupo: "Llamadas",
   },
   comisionPorcentaje: {

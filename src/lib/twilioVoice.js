@@ -29,22 +29,14 @@ function normalizePhoneNumber(raw) {
   return `+${digits}`;
 }
 
-const AVISO_GRABACION =
-  "Esta llamada puede ser grabada con fines de calidad y capacitación.";
-
-// `grabar` enciende la grabación de ambos lados (dual) desde que contestan,
-// no desde que suena: el tono de marcado no aporta nada y sí consume
-// almacenamiento.
+// `record-from-answer-dual` arranca la grabación en el instante en que el
+// cliente contesta -- no cuando empieza a sonar -- y guarda cada pierna en
+// su propio canal. El tono de marcado no se graba.
 //
-// El aviso va en el `url` del <Number>, no en un <Say> antes del <Dial>.
-// La diferencia importa: un <Say> suelto lo oye la vendedora, que es la
-// pierna que origina la llamada, y el cliente -- que es a quien hay que
-// informar -- no se enteraría de nada. El `url` del <Number> se reproduce
-// a quien contesta, justo antes de unir las dos piernas.
-function buildDialTwiml(
-  toNumber,
-  { grabar = false, avisar = false, statusCallbackUrl = null, avisoUrl = null } = {},
-) {
+// La llamada NO lleva aviso hablado: el consentimiento viene con el lead.
+// Eso también significa que no hay nada entre el "bueno" del cliente y la
+// vendedora: la llamada se conecta igual de rápido que sin grabar.
+function buildDialTwiml(toNumber, { grabar = false, statusCallbackUrl = null } = {}) {
   const twiml = new VoiceResponse();
 
   const dial = twiml.dial({
@@ -58,15 +50,7 @@ function buildDialTwiml(
       : {}),
   });
 
-  const anunciar = grabar && avisar && avisoUrl;
-  dial.number(anunciar ? { url: avisoUrl } : {}, normalizePhoneNumber(toNumber));
-  return twiml.toString();
-}
-
-// TwiML que oye el cliente al contestar, antes de que se una la llamada.
-function buildAvisoTwiml() {
-  const twiml = new VoiceResponse();
-  twiml.say({ language: "es-MX", voice: "Polly.Mia" }, AVISO_GRABACION);
+  dial.number(normalizePhoneNumber(toNumber));
   return twiml.toString();
 }
 
@@ -82,8 +66,6 @@ function vendedorIdDesdeFrom(from) {
 module.exports = {
   generateVoiceToken,
   buildDialTwiml,
-  buildAvisoTwiml,
   normalizePhoneNumber,
   vendedorIdDesdeFrom,
-  AVISO_GRABACION,
 };

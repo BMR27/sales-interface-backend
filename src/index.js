@@ -49,6 +49,7 @@ const parametrosRoutes = require("./routes/parametros");
 const estadisticasRoutes = require("./routes/estadisticas");
 const { startFullvectorRetryJob } = require("./jobs/fullvectorRetry");
 const { startEntregasSyncJob } = require("./jobs/entregasSync");
+const { startPurgaGrabacionesJob } = require("./jobs/purgaGrabaciones");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -156,4 +157,5 @@ app.listen(PORT, () => {
   startFullvectorRetryJob();
   startEntregasSyncJob();
   startMonitoringJob();
+  startPurgaGrabacionesJob();
 });

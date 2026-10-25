@@ -2,12 +2,7 @@ const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const twilioSignatureMiddleware = require("../middleware/twilioSignature");
-const {
-  generateVoiceToken,
-  buildDialTwiml,
-  buildAvisoTwiml,
-  vendedorIdDesdeFrom,
-} = require("../lib/twilioVoice");
+const { generateVoiceToken, buildDialTwiml, vendedorIdDesdeFrom } = require("../lib/twilioVoice");
 const { getParametros } = require("../lib/parametros");
 
 const router = express.Router();
@@ -30,8 +25,8 @@ router.post("/token", authMiddleware, (req, res) => {
 // llama sepa que se la está grabando no es opcional.
 router.get("/grabacion-activa", authMiddleware, async (req, res) => {
   try {
-    const { grabacionLlamadas, grabacionAvisoCliente } = await getParametros(req.user.tenantId);
-    res.json({ grabando: grabacionLlamadas, avisoAlCliente: grabacionLlamadas && grabacionAvisoCliente });
+    const { grabacionLlamadas } = await getParametros(req.user.tenantId);
+    res.json({ grabando: grabacionLlamadas });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
@@ -50,7 +45,6 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
   const leadIdCrudo = Number(req.body.leadId);
 
   let grabar = false;
-  let avisar = false;
 
   try {
     const vendedor = vendedorId
@@ -60,7 +54,6 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
     if (vendedor?.tenantId) {
       const params = await getParametros(vendedor.tenantId);
       grabar = params.grabacionLlamadas;
-      avisar = params.grabacionAvisoCliente;
 
       if (grabar && callSid) {
         const lead = Number.isInteger(leadIdCrudo)
@@ -94,7 +87,6 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
 
   const base = process.env.BACKEND_PUBLIC_URL;
   const statusCallbackUrl = base ? `${base}/api/voice/grabacion-status` : null;
-  const avisoUrl = base ? `${base}/api/voice/aviso-grabacion` : null;
 
   res.type("text/xml");
   res.send(
@@ -103,18 +95,9 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
       // cuando termine la grabación: grabar sin poder registrar el audio
       // sería cobrar almacenamiento por algo que nadie podría escuchar.
       grabar: grabar && !!statusCallbackUrl,
-      avisar,
       statusCallbackUrl,
-      avisoUrl,
     }),
   );
-});
-
-// POST /api/voice/aviso-grabacion — lo pide Twilio cuando el cliente
-// contesta, antes de unir las dos piernas: es el aviso que oye el cliente.
-router.post("/aviso-grabacion", twilioSignatureMiddleware, (req, res) => {
-  res.type("text/xml");
-  res.send(buildAvisoTwiml());
 });
 
 // POST /api/voice/grabacion-status — webhook de Twilio al terminar la
