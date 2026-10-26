@@ -8,10 +8,11 @@
 // Lo ven ADMIN y COORDINADOR: la coordinadora es quien hace las llamadas y
 // el admin quien vigila el dinero detenido.
 const express = require("express");
+const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const prisma = new PrismaClient();
 
 const ESTADOS = ["PENDIENTE_CONTACTO", "TRANSFERENCIA_OFRECIDA", "PAGO_CONFIRMADO", "ENVIADO", "CANCELADO"];
 

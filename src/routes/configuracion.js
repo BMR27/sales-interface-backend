@@ -1,11 +1,12 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
+const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { getPermisosEfectivos } = require("../lib/permisosCatalog");
 const { getParametros } = require("../lib/parametros");
 
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const prisma = new PrismaClient();
 
 // GET /api/configuracion/mis-permisos — permisos efectivos del usuario autenticado,
 // usados por el frontend para ocultar modulos/acciones desactivados por su ADMIN.

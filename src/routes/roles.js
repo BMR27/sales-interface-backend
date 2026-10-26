@@ -1,10 +1,11 @@
 const express = require("express");
+const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const { PERMISOS_CATALOG, ROLES_CONFIGURABLES, clavesValidas, getPermisosEfectivos } = require("../lib/permisosCatalog");
 
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const prisma = new PrismaClient();
 
 router.use(authMiddleware, adminMiddleware);
 

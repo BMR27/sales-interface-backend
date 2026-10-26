@@ -1,11 +1,12 @@
 const express = require("express");
 const ExcelJS = require("exceljs");
+const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const { ETIQUETAS } = require("../lib/auditoria");
 
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const prisma = new PrismaClient();
 
 // Kardex es sólo para administradores: muestra quién hizo qué en todo el
 // espacio, incluidos los datos de contacto de cada usuario.

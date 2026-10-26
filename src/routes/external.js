@@ -1,4 +1,5 @@
 const express = require("express");
+const { PrismaClient } = require("@prisma/client");
 const { apiKeyMiddleware } = require("../middleware/apiKey");
 const { getNextVendedor } = require("../lib/assignment");
 const { getParametros } = require("../lib/parametros");
@@ -16,7 +17,7 @@ const {
 } = require("../lib/leadStatus");
 
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const prisma = new PrismaClient();
 
 const REQUIRED_FIELDS = [
   "folio",

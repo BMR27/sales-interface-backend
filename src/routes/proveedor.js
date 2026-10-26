@@ -1,11 +1,12 @@
 const express = require("express");
 const crypto = require("crypto");
+const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const proveedorMiddleware = require("../middleware/proveedor");
 const { hashKey } = require("../middleware/apiKey");
 
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const prisma = new PrismaClient();
 
 router.use(authMiddleware, proveedorMiddleware);
 

@@ -1,11 +1,12 @@
 const express = require("express");
+const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const { getParametros } = require("../lib/parametros");
 const { LEAD_STATUSES, LEAD_STATUS_LABELS, LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
 
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const prisma = new PrismaClient();
 
 // Estadísticas del tablero de Admin. Es sólo para ADMIN: el resto de los
 // roles tiene sus propias vistas y no deben cambiar.

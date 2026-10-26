@@ -1,6 +1,7 @@
+const { PrismaClient } = require("@prisma/client");
 const { getRequestContext, bufferError, takeBufferedErrors } = require("./requestContext");
 
-const prisma = require("./prisma");
+const prisma = new PrismaClient();
 
 function pickErrorAndMessage(args) {
   const err = args.find((a) => a instanceof Error);

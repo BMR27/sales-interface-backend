@@ -1,6 +1,7 @@
+const { PrismaClient } = require("@prisma/client");
 const { isEnabled, sendMail, parseDestinatarios } = require("./mailer");
 
-const prisma = require("./prisma");
+const prisma = new PrismaClient();
 
 // Las notificaciones se configuran por empresa desde Configuración (solo
 // ADMIN), no por variable de entorno: quién recibe los avisos es una

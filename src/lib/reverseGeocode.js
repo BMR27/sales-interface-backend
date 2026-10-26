@@ -1,5 +1,6 @@
+const { PrismaClient } = require("@prisma/client");
 
-const prisma = require("./prisma");
+const prisma = new PrismaClient();
 
 const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
 const HERE_REVERSE_URL = "https://revgeocode.search.hereapi.com/v1/revgeocode";

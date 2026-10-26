@@ -7,13 +7,14 @@
 // `Notificacion` (ver avisos.js): si el hito ya se avisó hoy, el insert se
 // descarta solo. Eso lo hace seguro aunque haya varias instancias del
 // servidor y aunque la persona recargue diez veces.
+const { PrismaClient } = require("@prisma/client");
 const { LEAD_STATUSES_ABIERTOS } = require("./leadStatus");
 const { getParametros } = require("./parametros");
 const { calcularQuincenaVendedora, calcularQuincenaCoordinadoras } = require("./comisiones");
 const { claveDia, crearAvisoUnico } = require("./avisos");
 const { frasePara } = require("./motivacion");
 
-const prisma = require("./prisma");
+const prisma = new PrismaClient();
 
 const dinero = (n) => `$${Math.round(n || 0).toLocaleString("es-MX")}`;
 const plural = (n, singular, pluralForma) => `${n} ${n === 1 ? singular : pluralForma}`;

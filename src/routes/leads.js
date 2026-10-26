@@ -1,5 +1,6 @@
 const express = require("express");
 const crypto = require("crypto");
+const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { requirePermiso } = require("../lib/permisosCatalog");
 const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
@@ -10,7 +11,7 @@ const { ocultarTelefonoLead, ocultarTelefonoLeads, ocultaTelefono } = require(".
 const { detallarMovimiento } = require("../lib/auditoria");
 
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const prisma = new PrismaClient();
 
 // GET /api/leads
 router.get("/", authMiddleware, async (req, res) => {

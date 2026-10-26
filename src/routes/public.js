@@ -1,8 +1,9 @@
 const express = require("express");
+const { PrismaClient } = require("@prisma/client");
 const { direccionDesdeCoordenadas } = require("../lib/reverseGeocode");
 
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const prisma = new PrismaClient();
 
 // GET /api/public/branding?host=empresaA.midominio.com
 // Sin autenticacion: la pantalla de login necesita saber de que empresa es

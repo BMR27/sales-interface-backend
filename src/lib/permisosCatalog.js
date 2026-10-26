@@ -1,5 +1,6 @@
+const { PrismaClient } = require("@prisma/client");
 
-const prisma = require("./prisma");
+const prisma = new PrismaClient();
 
 // Catalogo de permisos configurables por rol, agrupados para la UI de
 // Configuracion > Roles y Permisos. Agregar un permiso nuevo es solo

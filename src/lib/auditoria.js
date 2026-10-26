@@ -1,5 +1,6 @@
+const { PrismaClient } = require("@prisma/client");
 
-const prisma = require("./prisma");
+const prisma = new PrismaClient();
 
 // Campos que nunca deben quedar escritos en el kardex, venga de donde venga
 // el request. Se filtran por nombre en cualquier nivel del objeto.

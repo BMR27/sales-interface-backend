@@ -1,8 +1,9 @@
 const express = require("express");
+const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const prisma = new PrismaClient();
 
 const SEPOMEX_URL = "https://sepomex.kurenn.dev/api/v1/zip_codes";
 
