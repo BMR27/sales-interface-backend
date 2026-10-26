@@ -110,8 +110,24 @@ app.use(express.urlencoded({ extended: false })); // Twilio postea los webhooks 
 // de las rutas para alcanzar a enganchar el "finish" de cualquiera de ellas.
 app.use(auditMiddleware);
 
+// El arranque se fija una vez: comparado con la hora actual dice hace cuanto
+// se reinicio el servicio, que es como se sabe si un deploy entro de verdad.
+const ARRANCADO_EN = new Date();
+
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  // `version` responde una pregunta que no se podia contestar desde fuera:
+  // que commit esta corriendo. Sin esto, un deploy fallido dejaba el servicio
+  // sano respondiendo 200 con codigo viejo, y la unica forma de notarlo era
+  // que algo se rompiera en produccion. Railway inyecta el SHA del commit;
+  // fuera de Railway queda en "dev".
+  const sha = process.env.RAILWAY_GIT_COMMIT_SHA || null;
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    version: sha ? sha.slice(0, 7) : "dev",
+    arrancadoEn: ARRANCADO_EN.toISOString(),
+    segundosArriba: Math.round((Date.now() - ARRANCADO_EN.getTime()) / 1000),
+  });
 });
 
 app.use("/api/auth", authRoutes);
