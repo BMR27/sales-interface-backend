@@ -1,8 +1,7 @@
 const os = require("node:os");
-const { PrismaClient } = require("@prisma/client");
 const { drainBuckets } = require("../lib/requestMetrics");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma");
 
 const MEMORY_INTERVAL_MS = 60 * 1000;
 const FLUSH_INTERVAL_TICKS = 5; // cada 5 ticks de 1 min = cada 5 min

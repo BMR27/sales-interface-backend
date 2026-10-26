@@ -1,7 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 
 const { detallarMovimiento, registrar } = require("../lib/auditoria");
@@ -17,7 +16,7 @@ const { getParametros } = require("../lib/parametros");
 const { LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma");
 
 // El saludo al entrar. Para la vendedora lleva sus números del momento
 // (meta del día, leads en cola); para los demás roles es sólo el saludo.

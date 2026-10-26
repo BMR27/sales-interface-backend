@@ -8,10 +8,9 @@
 //
 // El plazo es por empresa, así que el tick recorre los tenants que tienen
 // grabaciones vivas y aplica a cada uno el suyo.
-const { PrismaClient } = require("@prisma/client");
 const { getParametros } = require("../lib/parametros");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma");
 
 // Una vez al día basta: el plazo se mide en días, no en minutos, y cada
 // corrida habla con la API de Twilio una vez por grabación.

@@ -1,7 +1,6 @@
-const { PrismaClient } = require("@prisma/client");
 const { isEnabled, syncVentaToFullVector } = require("../lib/fullvector");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma");
 
 const INTERVAL_MS = 5 * 60 * 1000;
 const MAX_ATTEMPTS = 10;

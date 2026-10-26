@@ -1,12 +1,11 @@
 const express = require("express");
-const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
 const { getParametros } = require("../lib/parametros");
 const { ocultarTelefonoLeads } = require("../lib/telefono");
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma");
 
 // GET /api/dashboard — métricas del día y leads del vendedor
 router.get("/", authMiddleware, async (req, res) => {

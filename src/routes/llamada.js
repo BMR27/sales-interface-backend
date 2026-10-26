@@ -1,12 +1,11 @@
 const express = require("express");
-const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const { requirePermiso } = require("../lib/permisosCatalog");
 const { registrarResultado } = require("../lib/historialLlamadas");
 const { ocultarTelefonoLead } = require("../lib/telefono");
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma");
 
 // GET /api/llamada/:id — info del lead para la llamada
 router.get("/:id", authMiddleware, async (req, res) => {

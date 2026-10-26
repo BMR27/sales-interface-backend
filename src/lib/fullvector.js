@@ -1,6 +1,5 @@
-const { PrismaClient } = require("@prisma/client");
 
-const prisma = new PrismaClient();
+const prisma = require("./prisma");
 
 const BASE_URL = process.env.FULLVECTOR_API_URL;
 const SERVICE_EMAIL = process.env.FULLVECTOR_SERVICE_EMAIL;

@@ -1,6 +1,5 @@
 const express = require("express");
 const ExcelJS = require("exceljs");
-const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const coordinacionMiddleware = require("../middleware/coordinacion");
 const { detallarMovimiento } = require("../lib/auditoria");
@@ -9,7 +8,7 @@ const { calcularQuincenaVendedora, calcularQuincenaCoordinadoras } = require("..
 const { crearAviso, crearAvisos } = require("../lib/avisos");
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma");
 
 router.use(authMiddleware, coordinacionMiddleware);
 

@@ -7,9 +7,8 @@
 // Entre los dos puede llegar el aviso de Twilio diciendo si contestaron.
 // Esta libreria junta las tres piezas en una sola fila para que el historial
 // se lea como lo que fue: un intento, con su desenlace y su consecuencia.
-const { PrismaClient } = require("@prisma/client");
 
-const prisma = new PrismaClient();
+const prisma = require("./prisma");
 
 // Ventana para considerar que un resultado pertenece al intento que se
 // acaba de marcar. El marcador y el formulario de resultado son dos
