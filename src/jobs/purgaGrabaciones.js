@@ -95,7 +95,25 @@ async function purgarGrabacionesVencidas() {
   return { borradas, fallidas };
 }
 
+// DESACTIVADO. En produccion este job tumbaba el proceso en su primer tick:
+// arranque -> 5 min -> caida -> reinicio -> 5 min -> caida, en bucle. Cada
+// reinicio dejaba caer las peticiones en curso, y de cara al usuario eso se
+// veia como "Error del servidor" al entrar o al marcar.
+//
+// La causa exacta sigue sin identificarse: el tick esta envuelto en
+// try/catch y cada borrado tambien, asi que no deberia poder tumbar nada.
+// Hasta entender que lo mata, no vuelve a programarse: una purga que ahorra
+// almacenamiento no justifica reiniciar la operacion cada cinco minutos.
+//
+// `purgarGrabacionesVencidas` queda exportada y probada, lista para
+// reactivarse cuando se sepa que pasaba (o para correrla a mano).
+const PROGRAMAR = process.env.PURGA_GRABACIONES_ACTIVA === "true";
+
 function startPurgaGrabacionesJob() {
+  if (!PROGRAMAR) {
+    console.log("purga de grabaciones: desactivada (PURGA_GRABACIONES_ACTIVA != true)");
+    return;
+  }
   if (!credenciales()) return;
 
   const tick = async () => {
