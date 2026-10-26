@@ -6,9 +6,8 @@
 // sesión en el acto, que es justo lo que hace falta cuando alguien entra
 // desde otro dispositivo y decide cerrar la sesión anterior.
 const crypto = require("crypto");
-const { PrismaClient } = require("@prisma/client");
 
-const prisma = new PrismaClient();
+const prisma = require("./prisma");
 
 // Las sesiones viven lo mismo que el token (ver routes/auth.js).
 const DURACION_HORAS = 8;

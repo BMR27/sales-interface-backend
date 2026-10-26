@@ -17,10 +17,9 @@
 //            completo de la quincena en vez de ir sumando a mano)
 //
 // La coordinadora cobra una tarifa fija por venta válida, no por pieza.
-const { PrismaClient } = require("@prisma/client");
 const { getParametros } = require("./parametros");
 
-const prisma = new PrismaClient();
+const prisma = require("./prisma");
 
 // --- Quincenas: del 1 al 15 y del 16 al último día del mes ---
 

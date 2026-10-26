@@ -3,9 +3,8 @@
 // No confundir con src/lib/notificaciones.js, que manda correos a los
 // destinatarios que configura el admin. Estos son por persona y por rol, y
 // no salen de la aplicación.
-const { PrismaClient } = require("@prisma/client");
 
-const prisma = new PrismaClient();
+const prisma = require("./prisma");
 
 const CATEGORIAS = ["INFO", "EXITO", "ALERTA", "MOTIVACION", "LOGRO"];
 

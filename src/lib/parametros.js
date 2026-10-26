@@ -1,6 +1,5 @@
-const { PrismaClient } = require("@prisma/client");
 
-const prisma = new PrismaClient();
+const prisma = require("./prisma");
 
 // Parámetros de operación por empresa. Estaban fijos en el código (la
 // comisión en ganancias.js, las metas en dashboard.js, el costo de envío en

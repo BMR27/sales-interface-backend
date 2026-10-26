@@ -7,13 +7,12 @@
 // sensible y quien la oye tiene que quedar registrado.
 const express = require("express");
 const { Readable } = require("stream");
-const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const { registrar } = require("../lib/auditoria");
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma");
 
 router.use(authMiddleware, adminMiddleware);
 

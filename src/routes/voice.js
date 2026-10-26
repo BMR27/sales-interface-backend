@@ -1,5 +1,4 @@
 const express = require("express");
-const { PrismaClient } = require("@prisma/client");
 const authMiddleware = require("../middleware/auth");
 const twilioSignatureMiddleware = require("../middleware/twilioSignature");
 const { generateVoiceToken, buildDialTwiml, vendedorIdDesdeFrom } = require("../lib/twilioVoice");
@@ -7,7 +6,7 @@ const { getParametros } = require("../lib/parametros");
 const { registrarIntento, registrarDesenlace } = require("../lib/historialLlamadas");
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma");
 
 // POST /api/voice/token — el vendedor obtiene un Access Token para el Twilio Device del navegador
 router.post("/token", authMiddleware, (req, res) => {
