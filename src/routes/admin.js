@@ -264,13 +264,34 @@ router.get("/leads", async (req, res) => {
       ];
     }
 
-    const leads = await prisma.lead.findMany({
-      where,
-      orderBy: { updatedAt: "desc" },
-      include: { vendedor: { select: { id: true, nombre: true, email: true } } },
-    });
+    // Los conteos ignoran el filtro de estatus a proposito: son las pastillas
+    // con las que se filtra, y tienen que seguir diciendo cuantos hay de cada
+    // uno aunque ya se haya elegido uno. Lo demas (busqueda, vendedora,
+    // origen) si aplica, o los numeros no corresponderian con la lista.
+    const whereSinStatus = { ...where };
+    delete whereSinStatus.status;
 
-    res.json({ leads });
+    const [leads, porStatus, sinAsignar] = await Promise.all([
+      prisma.lead.findMany({
+        where,
+        orderBy: { updatedAt: "desc" },
+        include: { vendedor: { select: { id: true, nombre: true, email: true } } },
+      }),
+      prisma.lead.groupBy({ by: ["status"], where: whereSinStatus, _count: true }),
+      prisma.lead.count({ where: { ...whereSinStatus, vendedorId: null } }),
+    ]);
+
+    const conteos = Object.fromEntries(LEAD_STATUSES.map((s) => [s, 0]));
+    for (const fila of porStatus) conteos[fila.status] = fila._count;
+
+    res.json({
+      leads,
+      conteos: {
+        ...conteos,
+        total: Object.values(conteos).reduce((a, b) => a + b, 0),
+        sinAsignar,
+      },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
