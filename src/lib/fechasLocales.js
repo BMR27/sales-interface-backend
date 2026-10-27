@@ -39,4 +39,44 @@ function rangoFechas(desde, hasta) {
   return { ...(inicio ? { gte: inicio } : {}), ...(fin ? { lte: fin } : {}) };
 }
 
-module.exports = { inicioDeDia, finDeDia, rangoFechas, OFFSET };
+const OFFSET_MINUTOS = (() => {
+  const m = /^([+-])(\d{2}):(\d{2})$/.exec(OFFSET);
+  if (!m) return 0;
+  return (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
+})();
+
+// Corre el instante al huso de la operacion para poder leerle el dia y la
+// hora con los getters UTC. Es el mismo truco de siempre: no se cambia el
+// momento, se cambia desde donde se mira.
+function enHusoLocal(fecha) {
+  return new Date(fecha.getTime() + OFFSET_MINUTOS * 60000);
+}
+
+// El dia de calendario al que pertenece un instante, visto desde Mexico.
+// Agrupar series por `toISOString()` a secas parte los dias a las 18:00.
+function diaLocal(fecha) {
+  return enHusoLocal(fecha).toISOString().slice(0, 10);
+}
+
+// La hora del reloj de la operacion, 0-23. `getHours()` daria la del
+// servidor, que corre en UTC y reportaria las llamadas seis horas corridas.
+function horaLocal(fecha) {
+  return enHusoLocal(fecha).getUTCHours();
+}
+
+function inicioDeHoy(ref = new Date()) {
+  return inicioDeDia(diaLocal(ref));
+}
+
+function inicioDeMes(ref = new Date()) {
+  return inicioDeDia(`${diaLocal(ref).slice(0, 8)}01`);
+}
+
+function inicioDeAno(ref = new Date()) {
+  return inicioDeDia(`${diaLocal(ref).slice(0, 4)}-01-01`);
+}
+
+module.exports = {
+  inicioDeDia, finDeDia, rangoFechas, OFFSET,
+  diaLocal, horaLocal, inicioDeHoy, inicioDeMes, inicioDeAno,
+};

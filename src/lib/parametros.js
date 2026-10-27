@@ -50,6 +50,19 @@ const DEFINICION = {
       "Pasado este plazo el audio se borra solo de Twilio y queda unicamente el registro de que la llamada existio. Conservar de mas cuesta almacenamiento y amplia lo que tendrias que entregar ante una solicitud de datos.",
     grupo: "Llamadas",
   },
+  // Cuantos intentos sin respuesta hacen falta para dar un lead por basura
+  // en el tablero de calidad (ver src/lib/calidadLeads.js). Solo afecta como
+  // se cuenta: no descarta el lead ni le impide a nadie volver a marcarle.
+  calidadIntentosNoContesto: {
+    default: 3,
+    min: 1,
+    max: 20,
+    label: "Intentos para contar un lead como 'no contesto'",
+    sufijo: "intentos",
+    ayuda:
+      "En el tablero de Calidad de leads, un lead al que se le marco esta cantidad de veces sin que nunca conteste se cuenta como basura. Es solo para el reporte: el lead sigue vivo y se le puede seguir llamando.",
+    grupo: "Calidad de leads",
+  },
   comisionPorcentaje: {
     default: 15,
     min: 0,

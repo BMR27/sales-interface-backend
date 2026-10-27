@@ -3,6 +3,10 @@ const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const { getParametros } = require("../lib/parametros");
 const { LEAD_STATUSES, LEAD_STATUS_LABELS, LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
+const {
+  CATEGORIAS, resumirLlamadas, agregar, contarHoras, umbralDeIntentos,
+} = require("../lib/calidadLeads");
+const { inicioDeHoy, inicioDeMes, inicioDeAno } = require("../lib/fechasLocales");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -427,6 +431,77 @@ router.get("/cruce-fullvector", async (req, res) => {
           zipCode: v.lead.zipCode,
         },
       })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/admin/estadisticas/calidad
+//
+// Calidad de los leads recibidos, en tres cortes: hoy, el mes en curso y el
+// año a la fecha. Los tres salen de UNA sola lectura, porque el dia es un
+// subconjunto del mes y el mes del año: se trae el YTD y los otros dos se
+// filtran en memoria. Tres consultas separadas habrian leido lo mismo tres
+// veces para dar exactamente el mismo resultado.
+router.get("/calidad", async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    // Los cortes son los del calendario de la operacion, no los del
+    // servidor, que corre en UTC (ver src/lib/fechasLocales.js). Con
+    // `setHours(0,0,0,0)` el "hoy" del tablero habria empezado a las 18:00
+    // del dia anterior.
+    const ahora = new Date();
+    const inicioAno = inicioDeAno(ahora);
+    const inicioMes = inicioDeMes(ahora);
+    const inicioDia = inicioDeHoy(ahora);
+
+    const umbral = await umbralDeIntentos(tenantId);
+
+    const [leads, llamadas] = await Promise.all([
+      prisma.lead.findMany({
+        where: { tenantId, createdAt: { gte: inicioAno } },
+        select: {
+          id: true, status: true, source: true, producto: true, createdAt: true,
+          vendedorId: true, asignadoPorId: true,
+          vendedor: { select: { nombre: true } },
+          asignadoPor: { select: { nombre: true } },
+        },
+      }),
+      // Las llamadas de esos mismos leads. Se filtra por el lead y no por la
+      // fecha de la llamada a proposito: un lead de ayer al que se le marco
+      // hoy tiene que contar sus tres intentos completos, o el umbral de
+      // "no contesto" se evalua con medio historial.
+      prisma.llamada.findMany({
+        where: { tenantId, lead: { createdAt: { gte: inicioAno } } },
+        select: { leadId: true, contestada: true, desenlace: true, fecha: true },
+        orderBy: { fecha: "asc" },
+      }),
+    ]);
+
+    const resumenPorLead = resumirLlamadas(llamadas);
+    const corte = (desde) => agregar(leads, resumenPorLead, umbral, (l) => l.createdAt >= desde);
+
+    const ytd = corte(inicioAno);
+    const mes = corte(inicioMes);
+    const dia = corte(inicioDia);
+
+    // Las horas se miden sobre el mes: el dia tiene muy pocas llamadas para
+    // que el porcentaje signifique algo, y el año entero esconde los
+    // cambios de horario de la operacion.
+    const horas = contarHoras(llamadas, inicioMes);
+
+    res.json({
+      categorias: CATEGORIAS,
+      umbralIntentos: umbral,
+      generadoEn: ahora,
+      periodos: {
+        dia: { ...dia, desde: inicioDia, label: "Hoy" },
+        mes: { ...mes, desde: inicioMes, label: "Mes en curso" },
+        ytd: { ...ytd, desde: inicioAno, label: "Año a la fecha" },
+      },
+      porHora: horas,
     });
   } catch (err) {
     console.error(err);
