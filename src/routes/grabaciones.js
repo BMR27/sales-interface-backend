@@ -10,6 +10,7 @@ const { Readable } = require("stream");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const { registrar } = require("../lib/auditoria");
+const { rangoFechas } = require("../lib/fechasLocales");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -26,21 +27,26 @@ function credencialesTwilio() {
 // GET /api/admin/grabaciones — listado con filtros
 router.get("/", async (req, res) => {
   try {
-    const { vendedorId, leadId, desde, hasta } = req.query;
+    const { vendedorId, leadId, desde, hasta, q } = req.query;
     const where = { tenantId: req.user.tenantId };
 
     if (vendedorId) where.vendedorId = Number(vendedorId);
     if (leadId) where.leadId = Number(leadId);
-    if (desde || hasta) {
-      where.createdAt = {};
-      if (desde) where.createdAt.gte = new Date(desde);
-      if (hasta) {
-        // `hasta` llega como día suelto: se incluye completo, no hasta su
-        // medianoche, que dejaría fuera todo lo de ese día.
-        const fin = new Date(hasta);
-        fin.setHours(23, 59, 59, 999);
-        where.createdAt.lte = fin;
-      }
+
+    // Los límites del rango se calculan en la hora de la operación, no en la
+    // del servidor (ver src/lib/fechasLocales.js).
+    const fechas = rangoFechas(desde, hasta);
+    if (fechas) where.createdAt = fechas;
+
+    // Búsqueda por teléfono o por nombre del cliente. El teléfono se guarda
+    // en E.164 (+52...), así que se comparan sólo los dígitos: quien busca
+    // "6421047861" tiene que encontrar "+526421047861".
+    if (q) {
+      const texto = String(q).trim();
+      const digitos = texto.replace(/\D/g, "");
+      const condiciones = [{ nombre: { contains: texto, mode: "insensitive" } }];
+      if (digitos.length >= 4) condiciones.push({ telefono: { contains: digitos } });
+      where.lead = { OR: condiciones };
     }
 
     const limite = Math.min(Number(req.query.limite) || 50, 200);

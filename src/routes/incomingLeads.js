@@ -12,27 +12,13 @@
 const express = require("express");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
+const { rangoFechas } = require("../lib/fechasLocales");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
 
 router.use(authMiddleware, adminMiddleware);
 
-// Límites de fecha a partir de "YYYY-MM-DD" o un ISO completo.
-function rango(desde, hasta) {
-  const r = {};
-  if (desde) {
-    const d = new Date(desde.length === 10 ? `${desde}T00:00:00` : desde);
-    if (!Number.isNaN(d.getTime())) r.gte = d;
-  }
-  if (hasta) {
-    // Un día suelto se incluye completo: hasta=2026-10-26 no puede dejar
-    // fuera todo lo que entró ese día después de medianoche.
-    const h = new Date(hasta.length === 10 ? `${hasta}T23:59:59.999` : hasta);
-    if (!Number.isNaN(h.getTime())) r.lte = h;
-  }
-  return Object.keys(r).length ? r : null;
-}
 
 // GET /api/admin/incoming-leads/campos — qué campos manda realmente cada
 // proveedor, con cuántas veces aparece cada uno.
@@ -41,7 +27,7 @@ function rango(desde, hasta) {
 // adivinar, muestra las claves que de verdad llegan en el payload.
 router.get("/campos", async (req, res) => {
   try {
-    const fechas = rango(req.query.desde, req.query.hasta);
+    const fechas = rangoFechas(req.query.desde, req.query.hasta);
 
     const filas = await prisma.incomingLead.findMany({
       where: { tenantId: req.user.tenantId, ...(fechas ? { createdAt: fechas } : {}) },
@@ -94,7 +80,7 @@ router.get("/", async (req, res) => {
     const { q, status } = req.query;
     const take = Math.min(Number(req.query.limite) || 50, 200);
     const skip = Number(req.query.offset) || 0;
-    const fechas = rango(req.query.desde, req.query.hasta);
+    const fechas = rangoFechas(req.query.desde, req.query.hasta);
 
     const where = {
       tenantId: req.user.tenantId,
