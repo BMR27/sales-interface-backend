@@ -50,8 +50,9 @@ router.get("/", authMiddleware, async (req, res) => {
     });
 
     res.json({
-      // La vendedora solo ve los ultimos 4 digitos (ver src/lib/telefono.js).
-      leads: ocultarTelefonoLeads(leads, req.user.rol),
+      // La vendedora ve los ultimos 4 digitos si el parametro
+      // ocultarTelefonoVendedor esta encendido (ver src/lib/telefono.js).
+      leads: await ocultarTelefonoLeads(leads, req.user),
       counts: counts.reduce((acc, c) => ({ ...acc, [c.status]: c._count }), {}),
       totalVentas: totalMonto._sum.monto || 0,
     });
@@ -68,7 +69,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
       where: { id: parseInt(req.params.id), vendedorId: req.user.id },
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
-    res.json(ocultarTelefonoLead(lead, req.user.rol));
+    res.json(await ocultarTelefonoLead(lead, req.user));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
@@ -99,7 +100,7 @@ router.post("/", authMiddleware, async (req, res) => {
     // el alta si el correo falla (ver src/lib/notificaciones.js).
     notificarLeadNuevo(lead, { vendedor: req.user, origen: "web" });
 
-    res.status(201).json(ocultarTelefonoLead(lead, req.user.rol));
+    res.status(201).json(await ocultarTelefonoLead(lead, req.user));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
@@ -130,7 +131,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
         // Quien no puede VER el telefono tampoco puede escribirlo. Sin esta
         // guarda, una pantalla que reenviara el valor que recibio grabaria
         // el enmascarado encima del numero real y lo destruiria.
-        ...(ocultaTelefono(req.user.rol) ? {} : { telefono }),
+        ...((await ocultaTelefono(req.user)) ? {} : { telefono }),
       },
     });
 
@@ -168,7 +169,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
       despues: lead,
     });
 
-    res.json(ocultarTelefonoLead(lead, req.user.rol));
+    res.json(await ocultarTelefonoLead(lead, req.user));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

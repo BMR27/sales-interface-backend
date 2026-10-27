@@ -35,7 +35,7 @@ router.get("/", authMiddleware, async (req, res) => {
         porcentajeMeta: Math.round((ventasHoy / metaDiaria) * 100),
         conversion: ventasHoy > 0 ? Math.round((entregasExitosas / ventasHoy) * 100) : 0,
       },
-      leads: ocultarTelefonoLeads(leads, req.user.rol),
+      leads: await ocultarTelefonoLeads(leads, req.user),
     });
   } catch (err) {
     console.error(err);

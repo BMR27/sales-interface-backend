@@ -37,9 +37,11 @@ router.get("/grabacion-activa", authMiddleware, async (req, res) => {
 router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
   const callSid = req.body.CallSid;
   // A que numero se marca lo decide el servidor, NO el navegador. Antes
-  // venia en `To` desde el cliente; ahora la vendedora ya no conoce el
-  // telefono completo (solo los ultimos 4 digitos, ver src/lib/telefono.js)
-  // y mandarselo para que lo reenviara habria hecho inutil el ocultamiento.
+  // venia en `To` desde el cliente; ahora, con ocultarTelefonoVendedor
+  // encendido, la vendedora no conoce el telefono completo (ver
+  // src/lib/telefono.js) y mandarselo para que lo reenviara habria hecho
+  // inutil el ocultamiento. Resolverlo aqui ademas hace que marcar funcione
+  // igual con el parametro en cualquiera de las dos posiciones.
   // Se resuelve del lead, que ademas es la unica fuente confiable.
   let to = null;
 

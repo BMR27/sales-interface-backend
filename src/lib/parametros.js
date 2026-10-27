@@ -16,6 +16,19 @@ const DEFINICION = {
       "Apagado, los leads que llegan por la API entran sin vendedora y esperan en la cola del coordinador. Encendido, se reparten solos por turnos entre las vendedoras activas.",
     grupo: "Asignación de leads",
   },
+  // Nace encendido porque asi se comporto el sistema desde el principio:
+  // apagarlo es una decision explicita de la empresa, no un descuido de
+  // configuracion. El enmascarado vive en el servidor (ver
+  // src/lib/telefono.js), asi que encenderlo no deja el numero completo
+  // viajando en la respuesta.
+  ocultarTelefonoVendedor: {
+    tipo: "boolean",
+    default: true,
+    label: "Ocultar el telefono del lead a las vendedoras",
+    ayuda:
+      "Encendido, la vendedora solo ve los ultimos 4 digitos y marcar sigue funcionando (el marcador manda el id del lead). Apagado, ve el numero completo y puede corregirlo. No afecta al administrador ni a la coordinadora, que siempre lo ven.",
+    grupo: "Asignación de leads",
+  },
   // Grabar llamadas nace apagado a proposito: es una decision legal de cada
   // empresa (aviso de privacidad, consentimiento del cliente, cuanto tiempo
   // se conserva el audio), no algo que el sistema deba dar por hecho.

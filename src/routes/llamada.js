@@ -30,7 +30,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
     res.json({
       // El numero completo no sale del servidor: el marcador manda el id del
       // lead y el webhook de TwiML resuelve a que numero llamar.
-      lead: ocultarTelefonoLead(lead, req.user.rol),
+      lead: await ocultarTelefonoLead(lead, req.user),
       // Un lead con venta cerrada se puede consultar pero no volver a
       // vender: la dirección y la ubicación compartida se siguen
       // necesitando a la vista para completar el envío. Quien bloquea de
