@@ -15,8 +15,10 @@ const prisma = require("../lib/prisma");
 
 const ESTADOS = ["PENDIENTE_CONTACTO", "TRANSFERENCIA_OFRECIDA", "PAGO_CONFIRMADO", "ENVIADO", "CANCELADO"];
 
+const ROLES_GESTORES = ["ADMIN", "ADMIN_OPERATIVO", "COORDINADOR"];
+
 function soloGestores(req, res, next) {
-  if (req.user?.rol !== "ADMIN" && req.user?.rol !== "COORDINADOR") {
+  if (!ROLES_GESTORES.includes(req.user?.rol)) {
     return res.status(403).json({ error: "Acceso restringido a administradores y coordinadores" });
   }
   next();

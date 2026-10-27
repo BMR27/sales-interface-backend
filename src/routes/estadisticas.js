@@ -1,6 +1,6 @@
 const express = require("express");
 const authMiddleware = require("../middleware/auth");
-const adminMiddleware = require("../middleware/admin");
+const gestionAdmin = require("../middleware/gestionAdmin");
 const { getParametros } = require("../lib/parametros");
 const { LEAD_STATUSES, LEAD_STATUS_LABELS } = require("../lib/leadStatus");
 const {
@@ -15,7 +15,7 @@ const prisma = require("../lib/prisma");
 
 // Estadísticas del tablero de Admin. Es sólo para ADMIN: el resto de los
 // roles tiene sus propias vistas y no deben cambiar.
-router.use(authMiddleware, adminMiddleware);
+router.use(authMiddleware, gestionAdmin);
 
 // Los limites de dia son los del calendario de la operacion, no los del
 // servidor, que corre en UTC (ver src/lib/fechasLocales.js). Con

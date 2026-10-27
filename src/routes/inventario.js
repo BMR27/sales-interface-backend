@@ -1,11 +1,11 @@
 const express = require("express");
 const authMiddleware = require("../middleware/auth");
-const adminMiddleware = require("../middleware/admin");
+const gestionAdmin = require("../middleware/gestionAdmin");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
 
-router.use(authMiddleware, adminMiddleware);
+router.use(authMiddleware, gestionAdmin);
 
 const LOW_STOCK_THRESHOLD = 10;
 

@@ -4,6 +4,11 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
+const gestionAdmin = require("../middleware/gestionAdmin");
+
+// Roles que un administrador puede darle a alguien de su espacio. SUPER_ADMIN
+// queda fuera: es nivel plataforma y no se reparte desde aqui.
+const ROLES_ASIGNABLES = ["ADMIN", "ADMIN_OPERATIVO", "VENDEDOR", "COORDINADOR"];
 const { getNextVendedor } = require("../lib/assignment");
 const { parseWorkbookBuffer, validateRow, buildTemplateBuffer } = require("../lib/leadsImport");
 const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
@@ -23,7 +28,10 @@ const upload = multer({
   },
 });
 
-router.use(authMiddleware, adminMiddleware);
+// La puerta deja entrar a los dos administradores; lo que no comparten
+// (el equipo y las invitaciones a proveedores) lleva `adminMiddleware`
+// pegado a su propia ruta, mas abajo.
+router.use(authMiddleware, gestionAdmin);
 
 // GET /api/admin/overview
 router.get("/overview", async (req, res) => {
@@ -437,7 +445,7 @@ router.get("/ventas", async (req, res) => {
 });
 
 // GET /api/admin/vendedores
-router.get("/vendedores", async (req, res) => {
+router.get("/vendedores", adminMiddleware, async (req, res) => {
   try {
     const usuarios = await prisma.user.findMany({
       where: { tenantId: req.user.tenantId },
@@ -490,14 +498,14 @@ router.get("/vendedores", async (req, res) => {
 });
 
 // POST /api/admin/vendedores
-router.post("/vendedores", async (req, res) => {
+router.post("/vendedores", adminMiddleware, async (req, res) => {
   try {
     const { nombre, email, password, rol } = req.body;
     if (!nombre || !email || !password) {
       return res.status(400).json({ error: "Nombre, email y contraseña requeridos" });
     }
     const rolFinal = rol || "VENDEDOR";
-    if (!["ADMIN", "VENDEDOR", "COORDINADOR"].includes(rolFinal)) {
+    if (!ROLES_ASIGNABLES.includes(rolFinal)) {
       return res.status(400).json({ error: "rol inválido" });
     }
 
@@ -517,10 +525,10 @@ router.post("/vendedores", async (req, res) => {
 });
 
 // PUT /api/admin/vendedores/:id
-router.put("/vendedores/:id", async (req, res) => {
+router.put("/vendedores/:id", adminMiddleware, async (req, res) => {
   try {
     const { nombre, email, rol, activo } = req.body;
-    if (rol !== undefined && !["ADMIN", "VENDEDOR", "COORDINADOR"].includes(rol)) {
+    if (rol !== undefined && !ROLES_ASIGNABLES.includes(rol)) {
       return res.status(400).json({ error: "rol inválido" });
     }
 
@@ -547,7 +555,7 @@ router.put("/vendedores/:id", async (req, res) => {
 });
 
 // POST /api/admin/proveedores/invitacion — genera un link de registro para un proveedor de leads de este espacio
-router.post("/proveedores/invitacion", async (req, res) => {
+router.post("/proveedores/invitacion", adminMiddleware, async (req, res) => {
   try {
     const token = jwt.sign(
       { tenantId: req.user.tenantId, purpose: "proveedor_invite" },

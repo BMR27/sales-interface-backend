@@ -36,8 +36,16 @@ model User {
 }
 
 enum Rol {
+  // Nivel plataforma: administra los espacios (empresas), no vive dentro de
+  // ninguno. En pantalla se llama "Dueño de la plataforma".
   SUPER_ADMIN
+  // Dueño de una empresa: acceso total dentro de su espacio. En pantalla se
+  // llama "Super Administrador".
   ADMIN
+  // Administrador de operacion: reparte leads, revisa ventas y mueve
+  // inventario, pero no toca al equipo, ni las API keys, ni la
+  // configuracion del espacio. En pantalla, "Administrador".
+  ADMIN_OPERATIVO
   VENDEDOR
   PROVEEDOR_LEADS
   COORDINADOR
