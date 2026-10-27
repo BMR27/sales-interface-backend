@@ -72,11 +72,20 @@ function inicioDeMes(ref = new Date()) {
   return inicioDeDia(`${diaLocal(ref).slice(0, 8)}01`);
 }
 
+// Domingo de la semana en curso, a las 00:00 de Mexico. El dia de la
+// semana tambien hay que leerlo en el huso local: `getDay()` en un servidor
+// UTC cambia de dia a las 18:00 y el sabado por la noche ya seria domingo.
+function inicioDeSemana(ref = new Date()) {
+  const local = enHusoLocal(ref);
+  const inicio = inicioDeHoy(ref);
+  return new Date(inicio.getTime() - local.getUTCDay() * 86400000);
+}
+
 function inicioDeAno(ref = new Date()) {
   return inicioDeDia(`${diaLocal(ref).slice(0, 4)}-01-01`);
 }
 
 module.exports = {
   inicioDeDia, finDeDia, rangoFechas, OFFSET,
-  diaLocal, horaLocal, inicioDeHoy, inicioDeMes, inicioDeAno,
+  diaLocal, horaLocal, inicioDeHoy, inicioDeSemana, inicioDeMes, inicioDeAno,
 };

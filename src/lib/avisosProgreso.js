@@ -11,6 +11,7 @@ const { LEAD_STATUSES_ABIERTOS } = require("./leadStatus");
 const { getParametros } = require("./parametros");
 const { calcularQuincenaVendedora, calcularQuincenaCoordinadoras } = require("./comisiones");
 const { claveDia, crearAvisoUnico } = require("./avisos");
+const { inicioDeHoy } = require("./fechasLocales");
 const { frasePara } = require("./motivacion");
 
 const prisma = require("./prisma");
@@ -22,8 +23,10 @@ const plural = (n, singular, pluralForma) => `${n} ${n === 1 ? singular : plural
 
 async function avisosVendedora(user) {
   const dia = claveDia();
-  const hoy = new Date();
-  hoy.setHours(0, 0, 0, 0);
+  // `claveDia` ya resolvia el dia en hora de Mexico, pero la ventana con la
+  // que se consultaban los numeros no: con setHours(0,0,0,0) en un servidor
+  // UTC, el aviso decia "hoy" y contaba desde las 18:00 del dia anterior.
+  const hoy = inicioDeHoy();
   const base = { userId: user.id, tenantId: user.tenantId ?? null };
 
   const [ventasHoy, pendientes, params, quincena] = await Promise.all([
@@ -156,8 +159,10 @@ async function avisosVendedora(user) {
 
 async function avisosCoordinadora(user) {
   const dia = claveDia();
-  const hoy = new Date();
-  hoy.setHours(0, 0, 0, 0);
+  // `claveDia` ya resolvia el dia en hora de Mexico, pero la ventana con la
+  // que se consultaban los numeros no: con setHours(0,0,0,0) en un servidor
+  // UTC, el aviso decia "hoy" y contaba desde las 18:00 del dia anterior.
+  const hoy = inicioDeHoy();
   const base = { userId: user.id, tenantId: user.tenantId ?? null };
 
   const [sinAsignar, ventasHoy, comisiones] = await Promise.all([
@@ -213,8 +218,10 @@ async function avisosCoordinadora(user) {
 
 async function avisosAdmin(user) {
   const dia = claveDia();
-  const hoy = new Date();
-  hoy.setHours(0, 0, 0, 0);
+  // `claveDia` ya resolvia el dia en hora de Mexico, pero la ventana con la
+  // que se consultaban los numeros no: con setHours(0,0,0,0) en un servidor
+  // UTC, el aviso decia "hoy" y contaba desde las 18:00 del dia anterior.
+  const hoy = inicioDeHoy();
   const base = { userId: user.id, tenantId: user.tenantId ?? null };
 
   const [sinAsignar, ventasHoy, fallidas, prepagosPendientes, stockBajo] = await Promise.all([
@@ -296,8 +303,10 @@ async function avisosAdmin(user) {
 
 async function avisosProveedor(user) {
   const dia = claveDia();
-  const hoy = new Date();
-  hoy.setHours(0, 0, 0, 0);
+  // `claveDia` ya resolvia el dia en hora de Mexico, pero la ventana con la
+  // que se consultaban los numeros no: con setHours(0,0,0,0) en un servidor
+  // UTC, el aviso decia "hoy" y contaba desde las 18:00 del dia anterior.
+  const hoy = inicioDeHoy();
   const base = { userId: user.id, tenantId: user.tenantId ?? null };
 
   // Los leads del proveedor son los que entraron por sus propias API keys;

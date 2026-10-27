@@ -9,6 +9,7 @@ const { crearAviso, crearAvisos } = require("../lib/avisos");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
+const { inicioDeDia, inicioDeHoy } = require("../lib/fechasLocales");
 
 router.use(authMiddleware, coordinacionMiddleware);
 
@@ -33,8 +34,8 @@ function classify(status) {
 router.get("/overview", async (req, res) => {
   try {
     const tenantId = req.user.tenantId;
-    const inicioDia = new Date();
-    inicioDia.setHours(0, 0, 0, 0);
+    // Hora de la operacion, no del servidor en UTC (fechasLocales.js).
+    const inicioDia = inicioDeHoy();
 
     const [vendedores, grouped, ventasHoy] = await Promise.all([
       prisma.user.findMany({ where: { rol: "VENDEDOR", tenantId }, select: { id: true, nombre: true } }),
@@ -243,9 +244,11 @@ router.post("/leads/asignar", async (req, res) => {
 // GET /api/coordinador/progreso?fecha=YYYY-MM-DD
 router.get("/progreso", async (req, res) => {
   try {
-    const fecha = req.query.fecha ? new Date(`${req.query.fecha}T00:00:00`) : new Date();
-    const inicio = new Date(fecha); inicio.setHours(0, 0, 0, 0);
-    const fin = new Date(inicio); fin.setDate(fin.getDate() + 1);
+    // El dia que se pide ("2026-10-26") es un dia del calendario de quien
+    // lo escribe, no un instante UTC: sin esto, el progreso del dia perdia
+    // todo lo ocurrido despues de las 18:00.
+    const inicio = req.query.fecha ? inicioDeDia(req.query.fecha) : inicioDeHoy();
+    const fin = new Date(inicio.getTime() + 86400000);
 
     const leads = await prisma.lead.findMany({
       where: { tenantId: req.user.tenantId, createdAt: { gte: inicio, lt: fin } },

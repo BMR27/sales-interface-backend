@@ -3,6 +3,7 @@ const authMiddleware = require("../middleware/auth");
 const { LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
 const { getParametros } = require("../lib/parametros");
 const { ocultarTelefonoLeads } = require("../lib/telefono");
+const { inicioDeHoy } = require("../lib/fechasLocales");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -11,8 +12,9 @@ const prisma = require("../lib/prisma");
 router.get("/", authMiddleware, async (req, res) => {
   try {
     const vendedorId = req.user.id;
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
+    // Inicio del dia en hora de la operacion, no del servidor en UTC: las
+    // ventas de la tarde contaban como del dia siguiente (fechasLocales.js).
+    const hoy = inicioDeHoy();
 
     const [ventasHoy, entregasExitosas, leadsPendientes, metaDiaria] = await Promise.all([
       prisma.venta.count({ where: { vendedorId, fecha: { gte: hoy } } }),

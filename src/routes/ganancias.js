@@ -7,6 +7,7 @@ const { crearAviso } = require("../lib/avisos");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
+const { inicioDeHoy, inicioDeSemana, inicioDeMes } = require("../lib/fechasLocales");
 
 // GET /api/ganancias
 router.get("/", authMiddleware, async (req, res) => {
@@ -14,9 +15,12 @@ router.get("/", authMiddleware, async (req, res) => {
     const vendedorId = req.user.id;
     const ahora = new Date();
 
-    const inicioDia = new Date(ahora); inicioDia.setHours(0, 0, 0, 0);
-    const inicioSemana = new Date(ahora); inicioSemana.setDate(ahora.getDate() - ahora.getDay()); inicioSemana.setHours(0, 0, 0, 0);
-    const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
+    // Hora de la operacion, no del servidor (ver src/lib/fechasLocales.js):
+    // con setHours(0,0,0,0) la ganancia "de hoy" ya contaba desde las 18:00
+    // del dia anterior.
+    const inicioDia = inicioDeHoy(ahora);
+    const inicioSemana = inicioDeSemana(ahora);
+    const inicioMes = inicioDeMes(ahora);
 
     const [hoy, semana, mes, recientes] = await Promise.all([
       prisma.venta.aggregate({ where: { vendedorId, fecha: { gte: inicioDia } }, _sum: { monto: true, comision: true } }),

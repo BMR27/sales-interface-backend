@@ -7,6 +7,7 @@ const adminMiddleware = require("../middleware/admin");
 const { getNextVendedor } = require("../lib/assignment");
 const { parseWorkbookBuffer, validateRow, buildTemplateBuffer } = require("../lib/leadsImport");
 const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
+const { inicioDeHoy, inicioDeSemana, inicioDeMes } = require("../lib/fechasLocales");
 const { notificarLeadsImportados } = require("../lib/notificaciones");
 const { crearAvisos } = require("../lib/avisos");
 const { getParametros } = require("../lib/parametros");
@@ -27,10 +28,13 @@ router.use(authMiddleware, adminMiddleware);
 // GET /api/admin/overview
 router.get("/overview", async (req, res) => {
   try {
+    // Los cortes son los del calendario de la operacion, no los del
+    // servidor, que corre en UTC (ver src/lib/fechasLocales.js). Con
+    // setHours(0,0,0,0) el "hoy" arrancaba a las 18:00 del dia anterior.
     const ahora = new Date();
-    const inicioDia = new Date(ahora); inicioDia.setHours(0, 0, 0, 0);
-    const inicioSemana = new Date(ahora); inicioSemana.setDate(ahora.getDate() - ahora.getDay()); inicioSemana.setHours(0, 0, 0, 0);
-    const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
+    const inicioDia = inicioDeHoy(ahora);
+    const inicioSemana = inicioDeSemana(ahora);
+    const inicioMes = inicioDeMes(ahora);
 
     const tenantId = req.user.tenantId;
 

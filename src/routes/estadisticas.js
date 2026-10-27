@@ -6,7 +6,9 @@ const { LEAD_STATUSES, LEAD_STATUS_LABELS } = require("../lib/leadStatus");
 const {
   CATEGORIAS, resumirLlamadas, agregar, contarHoras, umbralDeIntentos,
 } = require("../lib/calidadLeads");
-const { inicioDeHoy, inicioDeMes, inicioDeAno } = require("../lib/fechasLocales");
+const {
+  inicioDeHoy, inicioDeSemana, inicioDeMes, inicioDeAno, diaLocal,
+} = require("../lib/fechasLocales");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -15,15 +17,12 @@ const prisma = require("../lib/prisma");
 // roles tiene sus propias vistas y no deben cambiar.
 router.use(authMiddleware, adminMiddleware);
 
-function inicioDelDia(fecha) {
-  const d = new Date(fecha);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function diaISO(fecha) {
-  return inicioDelDia(fecha).toISOString().slice(0, 10);
-}
+// Los limites de dia son los del calendario de la operacion, no los del
+// servidor, que corre en UTC (ver src/lib/fechasLocales.js). Con
+// setHours(0,0,0,0) el "hoy" del tablero arrancaba a las 18:00 del dia
+// anterior, y la serie diaria partia los dias en ese mismo punto.
+const inicioDelDia = (fecha) => inicioDeHoy(fecha);
+const diaISO = (fecha) => diaLocal(fecha);
 
 // Variación porcentual contra el periodo anterior. null cuando no hay base
 // de comparación: un "+100%" saliendo de cero no dice nada.
@@ -43,9 +42,9 @@ router.get("/", async (req, res) => {
     // Mismo tamaño de ventana justo antes, para comparar manzanas con manzanas.
     const desdeAnterior = inicioDelDia(new Date(desde.getTime() - dias * 86400000));
 
-    const inicioDia = inicioDelDia(ahora);
-    const inicioSemana = inicioDelDia(new Date(ahora.getTime() - ahora.getDay() * 86400000));
-    const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
+    const inicioDia = inicioDeHoy(ahora);
+    const inicioSemana = inicioDeSemana(ahora);
+    const inicioMes = inicioDeMes(ahora);
 
     const [
       parametros,
