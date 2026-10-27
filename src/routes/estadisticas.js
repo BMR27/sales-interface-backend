@@ -2,7 +2,7 @@ const express = require("express");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const { getParametros } = require("../lib/parametros");
-const { LEAD_STATUSES, LEAD_STATUS_LABELS, LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
+const { LEAD_STATUSES, LEAD_STATUS_LABELS } = require("../lib/leadStatus");
 const {
   CATEGORIAS, resumirLlamadas, agregar, contarHoras, umbralDeIntentos,
 } = require("../lib/calidadLeads");
@@ -55,7 +55,6 @@ router.get("/", async (req, res) => {
       leadsPorStatus, leadsPorSource,
       sinAsignar, leadsHoyApi,
       ventasDetalle, leadsDetalle,
-      vendedores, leadsPorVendedor, ventasPorVendedor,
       llamadasPeriodo,
       itemsVendidos,
       fullvector,
@@ -84,10 +83,6 @@ router.get("/", async (req, res) => {
       // memoria. Son volúmenes de semanas, no de años.
       prisma.venta.findMany({ where: { tenantId, fecha: { gte: desde } }, select: { fecha: true, monto: true, comision: true } }),
       prisma.lead.findMany({ where: { tenantId, createdAt: { gte: desde } }, select: { createdAt: true, status: true } }),
-
-      prisma.user.findMany({ where: { rol: "VENDEDOR", tenantId }, select: { id: true, nombre: true, email: true, activo: true } }),
-      prisma.lead.groupBy({ by: ["vendedorId", "status"], where: { tenantId }, _count: true }),
-      prisma.venta.groupBy({ by: ["vendedorId"], where: { tenantId, fecha: { gte: desde } }, _sum: { monto: true, comision: true }, _count: true }),
 
       prisma.llamada.count({ where: { tenantId, fecha: { gte: desde } } }),
 
@@ -121,33 +116,6 @@ router.get("/", async (req, res) => {
       e.ventas += 1;
       e.monto += v.monto;
     }
-
-    // --- Por vendedora: carga, resultado y conversión ---
-    const porVendedor = Object.fromEntries(
-      vendedores.map((v) => [v.id, {
-        id: v.id, nombre: v.nombre, email: v.email, activo: v.activo,
-        asignados: 0, abiertos: 0, concretados: 0, descartados: 0,
-        ventas: 0, monto: 0, comision: 0, conversion: 0,
-      }])
-    );
-    for (const row of leadsPorVendedor) {
-      const b = porVendedor[row.vendedorId];
-      if (!b) continue;
-      b.asignados += row._count;
-      if (row.status === "VENTA") b.concretados += row._count;
-      else if (row.status === "DESCARTADO") b.descartados += row._count;
-      if (LEAD_STATUSES_ABIERTOS.includes(row.status)) b.abiertos += row._count;
-    }
-    for (const row of ventasPorVendedor) {
-      const b = porVendedor[row.vendedorId];
-      if (!b) continue;
-      b.ventas = row._count;
-      b.monto = row._sum.monto || 0;
-      b.comision = row._sum.comision || 0;
-    }
-    const equipo = Object.values(porVendedor)
-      .map((v) => ({ ...v, conversion: v.asignados > 0 ? Math.round((v.concretados / v.asignados) * 100) : 0 }))
-      .sort((a, b) => b.monto - a.monto);
 
     // --- Productos más vendidos ---
     const productos = await prisma.producto.findMany({
@@ -210,7 +178,6 @@ router.get("/", async (req, res) => {
       },
 
       serie: Array.from(serie.values()),
-      equipo,
       topProductos,
 
       // Salud operativa: ventas que no llegaron a FullVector.
