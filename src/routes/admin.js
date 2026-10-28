@@ -450,7 +450,12 @@ router.get("/ventas", async (req, res) => {
 });
 
 // GET /api/admin/vendedores
-router.get("/vendedores", adminMiddleware, async (req, res) => {
+// Leer el equipo NO es administrarlo: el administrador de operacion
+// necesita la lista para poder asignar leads, que es parte de su trabajo.
+// Lo que queda cerrado a ADMIN es dar de alta, editar y desactivar, mas
+// abajo. Sin esto el desplegable de asignacion salia vacio y en silencio,
+// porque la pantalla se come el 403.
+router.get("/vendedores", gestionAdmin, async (req, res) => {
   try {
     const usuarios = await prisma.user.findMany({
       where: { tenantId: req.user.tenantId },
