@@ -422,6 +422,12 @@ model IncomingLead {
   product      String
   internalSku  String?
   externalSku  String
+  // Identificador del comprador en el sistema del proveedor. Opaco a
+  // proposito: no lo interpretamos, lo guardamos y lo devolvemos tal cual
+  // en las consultas de estatus para que el proveedor pueda conciliar por
+  // el. Antes llegaba (si acaso) sepultado en rawPayload, invisible y sin
+  // forma de filtrar.
+  buyerId      String?
   rawPayload   Json?
   status       IncomingLeadStatus @default(RECEIVED)
   errorMessage String?

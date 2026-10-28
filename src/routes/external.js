@@ -73,6 +73,14 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       firstName, lastName, age, city, ip,
     } = body;
 
+    // Identificador del comprador del lado del proveedor. Es opcional y no
+    // lo interpretamos: se guarda y se devuelve tal cual en las consultas
+    // de estatus. Se aceptan las dos grafias porque cada proveedor escribe
+    // su payload a su manera y no vale la pena rebotar un lead por eso.
+    const buyerIdCrudo = body.buyerId ?? body.buyer_id ?? null;
+    const buyerId =
+      buyerIdCrudo === null || buyerIdCrudo === "" ? null : String(buyerIdCrudo).slice(0, 120);
+
     const nombreCompleto = consumerName || [firstName, lastName].filter(Boolean).join(" ").trim();
     if (!nombreCompleto) {
       return res.status(400).json({ error: "Envía consumerName, o firstName y lastName" });
@@ -84,6 +92,7 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       data: {
         folio, consumerName: nombreCompleto, phone, country, state, zipCode,
         category, product, internalSku, externalSku,
+        buyerId,
         rawPayload: body,
         apiKeyId: req.apiKey.id,
         tenantId,
@@ -188,6 +197,9 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
     res.status(201).json({
       received: true,
       folio,
+      // Se devuelve para que el proveedor confirme en el acto que llegó
+      // como lo mandó, sin esperar a la primera consulta de estatus.
+      buyerId,
       leadId: lead.id,
       assignedTo: vendedor ? { id: vendedor.id, nombre: vendedor.nombre } : null,
     });
@@ -219,6 +231,7 @@ function serializeEstado(incomingLead) {
     const fallo = incomingLead.status === "FAILED";
     return {
       folio: incomingLead.folio,
+      buyerId: incomingLead.buyerId,
       leadId: null,
       status: null,
       statusLabel: fallo ? "No asignado" : "Recibido",
@@ -238,6 +251,7 @@ function serializeEstado(incomingLead) {
 
   return {
     folio: incomingLead.folio,
+    buyerId: incomingLead.buyerId,
     leadId: lead.id,
     status: lead.status,
     statusLabel: leadStatusLabel(lead.status),
@@ -299,8 +313,8 @@ router.get("/leads/:folio", apiKeyMiddleware, async (req, res) => {
 // API key y el estatus en que va cada uno.
 //
 // Filtros: ?status= (NUEVO | REAGENDADO | DESCARTADO | VENTA),
-// ?estado= (vendido | pendiente | cancelado), ?desde= / ?hasta= (ISO o
-// YYYY-MM-DD, sobre la fecha de recepción), ?limit= y ?skip=.
+// ?estado= (vendido | pendiente | cancelado), ?buyerId=, ?desde= / ?hasta=
+// (ISO o YYYY-MM-DD, sobre la fecha de recepción), ?limit= y ?skip=.
 router.get("/leads", apiKeyMiddleware, async (req, res) => {
   try {
     const { status, estado, desde, hasta } = req.query;
@@ -308,6 +322,11 @@ router.get("/leads", apiKeyMiddleware, async (req, res) => {
     const skip = Math.max(Number(req.query.skip) || 0, 0);
 
     const where = { apiKeyId: req.apiKey.id };
+
+    // Conciliar por comprador: todos los leads que el proveedor mandó con
+    // ese buyerId, en el estatus en que vayan.
+    const buyerId = req.query.buyerId ?? req.query.buyer_id;
+    if (buyerId) where.buyerId = String(buyerId);
 
     if (status) {
       const parsed = parseLeadStatus(status);
