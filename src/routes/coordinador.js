@@ -250,16 +250,104 @@ router.get("/progreso", async (req, res) => {
     const inicio = req.query.fecha ? inicioDeDia(req.query.fecha) : inicioDeHoy();
     const fin = new Date(inicio.getTime() + 86400000);
 
-    const leads = await prisma.lead.findMany({
-      where: { tenantId: req.user.tenantId, createdAt: { gte: inicio, lt: fin } },
-      orderBy: { createdAt: "desc" },
-      include: {
-        vendedor: { select: { id: true, nombre: true } },
-        items: { include: { producto: { select: { nombre: true } } } },
-      },
-    });
+    const tenantId = req.user.tenantId;
 
-    res.json({ fecha: inicio, total: leads.length, leads });
+    const [leads, vendedoras] = await Promise.all([
+      prisma.lead.findMany({
+        where: { tenantId, createdAt: { gte: inicio, lt: fin } },
+        orderBy: { createdAt: "desc" },
+        include: {
+          vendedor: { select: { id: true, nombre: true } },
+          items: { include: { producto: { select: { nombre: true } } } },
+          venta: { select: { monto: true } },
+        },
+      }),
+      prisma.user.findMany({
+        where: { tenantId, rol: "VENDEDOR", activo: true },
+        select: { id: true, nombre: true },
+      }),
+    ]);
+
+    // Intentos de llamada de esos leads. Es lo que separa "nadie le ha
+    // marcado" de "le marcaron y no contesta": sin este dato la pantalla
+    // no puede decir que es lo que de verdad necesita atencion.
+    const intentos = leads.length
+      ? await prisma.llamada.groupBy({
+          by: ["leadId"],
+          where: { tenantId, leadId: { in: leads.map((l) => l.id) } },
+          _count: true,
+        })
+      : [];
+    const intentosPorLead = Object.fromEntries(intentos.map((i) => [i.leadId, i._count]));
+
+    const ahora = new Date();
+
+    // Corte del dia: lo que la coordinadora quiere saber de un vistazo.
+    const resumen = {
+      total: leads.length,
+      sinAsignar: 0,
+      sinIntentos: 0,
+      nuevos: 0,
+      reagendados: 0,
+      concretados: 0,
+      descartados: 0,
+      monto: 0,
+    };
+
+    // Reagendados cuya hora ya paso: son los que se van a perder si nadie
+    // los retoma hoy, y hoy no aparecian en ningun lado.
+    const vencidos = [];
+
+    const porVendedora = Object.fromEntries(
+      vendedoras.map((v) => [v.id, {
+        id: v.id, nombre: v.nombre,
+        asignados: 0, sinIntentos: 0, concretados: 0, descartados: 0, abiertos: 0, monto: 0,
+      }])
+    );
+
+    for (const lead of leads) {
+      const n = intentosPorLead[lead.id] ?? 0;
+      if (n === 0) resumen.sinIntentos += 1;
+      if (!lead.vendedorId) resumen.sinAsignar += 1;
+
+      if (lead.status === "NUEVO") resumen.nuevos += 1;
+      else if (lead.status === "REAGENDADO") resumen.reagendados += 1;
+      else if (lead.status === "VENTA") resumen.concretados += 1;
+      else if (lead.status === "DESCARTADO") resumen.descartados += 1;
+
+      const monto = lead.venta?.monto ?? 0;
+      resumen.monto += monto;
+
+      if (lead.status === "REAGENDADO" && lead.fechaReagenda && new Date(lead.fechaReagenda) < ahora) {
+        vencidos.push(lead.id);
+      }
+
+      const b = porVendedora[lead.vendedorId];
+      if (b) {
+        b.asignados += 1;
+        if (n === 0) b.sinIntentos += 1;
+        if (lead.status === "VENTA") { b.concretados += 1; b.monto += monto; }
+        else if (lead.status === "DESCARTADO") b.descartados += 1;
+        else b.abiertos += 1;
+      }
+    }
+
+    const equipo = Object.values(porVendedora)
+      .map((v) => ({ ...v, conversion: v.asignados > 0 ? Math.round((v.concretados / v.asignados) * 100) : 0 }))
+      .sort((a, b) => b.concretados - a.concretados || b.asignados - a.asignados);
+
+    res.json({
+      fecha: inicio,
+      total: leads.length,
+      resumen,
+      equipo,
+      leads: leads.map((l) => ({
+        ...l,
+        intentos: intentosPorLead[l.id] ?? 0,
+        reagendaVencida: vencidos.includes(l.id),
+        monto: l.venta?.monto ?? null,
+      })),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
