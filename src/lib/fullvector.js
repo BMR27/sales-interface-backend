@@ -426,8 +426,41 @@ async function checkCoverage(postalCode, neighborhood) {
   }
 }
 
+/**
+ * Consulta la cobertura de un lead y la guarda en el propio lead, para que
+ * la marca FC FV se pueda pintar en la lista sin volver a preguntarle a
+ * FullVector por cada renglón. No es la fuente de verdad -- lo es
+ * FullVector -- sino el último valor conocido, con su fecha.
+ *
+ * Silencioso a propósito: se usa como fire-and-forget al dar de alta un
+ * lead, y que la clasificación no se pueda verificar nunca debe tumbar la
+ * creación del lead.
+ */
+async function marcarCoberturaDeLead(leadId) {
+  try {
+    const lead = await prisma.lead.findUnique({
+      where: { id: leadId },
+      select: { id: true, zipCode: true, colonia: true },
+    });
+    if (!lead?.zipCode) return null;
+
+    const covered = await checkCoverage(lead.zipCode, lead.colonia || undefined);
+    if (covered === null) return null;
+
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { coberturaFv: covered, coberturaFvAt: new Date() },
+    });
+    return covered;
+  } catch (err) {
+    console.error("no se pudo marcar la cobertura del lead", leadId, err.message);
+    return null;
+  }
+}
+
 module.exports = {
   isEnabled,
+  marcarCoberturaDeLead,
   aplicarResultadoEntrega,
   syncVentaToFullVector,
   sincronizarEntregas,

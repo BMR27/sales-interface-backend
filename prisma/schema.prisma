@@ -33,6 +33,7 @@ model User {
   grabaciones      GrabacionLlamada[]
 
   @@map("users")
+  leadsDescartados Lead[] @relation("LeadDescartadoPor")
 }
 
 enum Rol {
@@ -101,6 +102,7 @@ model Tenant {
   grabaciones   GrabacionLlamada[]
 
   @@map("tenants")
+  folioContador   FolioContador?
 }
 
 enum TipoPersona {
@@ -130,7 +132,14 @@ model Lead {
   cantidad   Int        @default(1)
   hora       String?
   status     LeadStatus @default(NUEVO)
+  // Folio del PROVEEDOR, tal como viene en el payload de la API. No es
+  // unico ni lo controlamos nosotros.
   folio      String?
+  // Folio interno, el que se usa para referirse a un lead por telefono o
+  // por escrito: "PS-000123". El nombre del cliente no sirve para eso --
+  // llega mal capturado desde el proveedor. Unico dentro del espacio, lo
+  // genera src/lib/folios.js.
+  folioPS    String?    @unique
   monto      Float?
   categoria  String?
   notas      String?
@@ -159,6 +168,18 @@ model Lead {
   municipio          String?
   lat                Float?
   lng                Float?
+
+  // Cobertura de FullVector para este domicilio: false = FC FV (Fuera de
+  // Cobertura Full Vector), o sea que en ese CP no hay pago en efectivo
+  // contra entrega y la venta tiene que cerrarse como prepago. null = aún
+  // no se ha podido verificar (sin CP, o FullVector no respondió).
+  //
+  // Es un reflejo, no la regla: la clasificación vive en FullVector (ver
+  // checkCoverage en src/lib/fullvector.js). Se vuelve a consultar en cada
+  // llamada, así que cuando allá se habilite cobertura nacional estos
+  // leads se reetiquetan solos.
+  coberturaFv        Boolean?
+  coberturaFvAt      DateTime?
 
   // Autoriza a un cliente sin sesión a compartir su ubicación desde
   // app/compartir-ubicacion/[token]/page.tsx (ver src/routes/public.js) --
@@ -193,6 +214,16 @@ model Lead {
   devueltoAt        DateTime?
   devueltoMotivo    String?
   devueltoPorNombre String?
+
+  // Por que se descarto. Clave del catalogo de src/lib/motivosDescarte.js,
+  // no texto libre: de aqui sale el porcentaje de calidad de la base que
+  // manda el proveedor, y para medir hace falta un conjunto cerrado.
+  // Null en los leads descartados antes de que existiera el catalogo.
+  motivoDescarte    String?
+  motivoDescarteNota String?
+  descartadoAt      DateTime?
+  descartadoPorId   Int?
+  descartadoPor     User?     @relation("LeadDescartadoPor", fields: [descartadoPorId], references: [id])
 
   incomingLead IncomingLead?
 
@@ -478,6 +509,20 @@ model RolePermiso {
 
   @@unique([tenantId, rol, clave])
   @@map("role_permisos")
+}
+
+// Consecutivo del folio interno, uno por espacio.
+//
+// Vive en su propia tabla y no se calcula con un max(folioPS): dos leads
+// que entran al mismo tiempo leerian el mismo maximo y se pelearian el
+// numero. Aqui el incremento y la lectura son la misma sentencia atomica
+// (ver src/lib/folios.js).
+model FolioContador {
+  tenantId Int    @id
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  valor    Int    @default(0)
+
+  @@map("folio_contadores")
 }
 
 model Producto {

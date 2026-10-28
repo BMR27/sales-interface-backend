@@ -402,6 +402,7 @@ function buildHistorialWhere(req) {
       { nombre: { contains: search, mode: "insensitive" } },
       { producto: { contains: search, mode: "insensitive" } },
       { telefono: { contains: search, mode: "insensitive" } },
+      { folioPS: { contains: search, mode: "insensitive" } },
     ];
   }
   return where;

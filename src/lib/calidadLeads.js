@@ -18,6 +18,7 @@
 
 const { getParametros } = require("./parametros");
 const { diaLocal, horaLocal } = require("./fechasLocales");
+const { esTrash, POR_CLAVE } = require("./motivosDescarte");
 
 // Twilio DialCallStatus: completed, busy, no-answer, failed, canceled.
 // "failed" es el que la red devuelve cuando el numero no se puede alcanzar:
@@ -40,9 +41,30 @@ const CATEGORIAS = [
 // le llamaran otro dia, alguien hablo con el -- da igual cuantos intentos
 // fallidos hubo antes, ese lead servia. Solo cuando el status no prueba
 // contacto se recurre a las llamadas para explicar por que.
+// El motivo CAPTURADO manda sobre el deducido. La deduccion es una
+// estimacion -- Twilio no distingue bien un numero inexistente de uno
+// apagado, y un lead llamado fuera del marcador no deja rastro -- y las
+// metricas de calidad se usan para presupuestar cuantos leads pedir, asi
+// que donde hay dato real se usa el dato real. La deduccion se queda para
+// los leads descartados antes de que existiera el catalogo.
+const MOTIVO_A_CATEGORIA = {
+  NUMERO_NO_EXISTE: "NO_EXISTE",
+  NUMERO_EQUIVOCADO: "NO_EXISTE",
+  NO_CONTESTO: "NO_CONTESTO",
+};
+
 function clasificarLead(lead, llamadas, umbralIntentos) {
   if (lead.status === "VENTA") return "CONCRETADA";
   if (lead.status === "REAGENDADO") return "REAGENDA";
+
+  if (lead.motivoDescarte) {
+    const directa = MOTIVO_A_CATEGORIA[lead.motivoDescarte];
+    if (directa) return directa;
+    // El resto de los motivos de proveedor (duplicado, fuera de cobertura,
+    // nunca pidio informes) son basura igual, pero no de los dos tipos que
+    // la grafica separa; y los de no-venta son descarte comercial.
+    return "DESCARTADO_OTRO";
+  }
 
   const { intentos = 0, contestadas = 0, inalcanzables = 0 } = llamadas || {};
 
@@ -82,12 +104,21 @@ function resumirLlamadas(llamadas) {
 
 function bucketVacio(extra = {}) {
   const base = Object.fromEntries(CATEGORIAS.map((c) => [c.clave, 0]));
-  return { total: 0, ...base, ...extra };
+  // `trash` y `noVendio` se cuentan aparte de las categorias: son la
+  // pregunta de negocio, y no se pueden derivar de ellas.
+  return { total: 0, trash: 0, noVendio: 0, conMotivo: 0, ...base, ...extra };
 }
 
-function sumarA(bucket, categoria) {
+// `clasificacion` trae, ademas de la categoria de la grafica, si el lead
+// fue basura por culpa del proveedor. Son dos ejes distintos: "numero no
+// existe" y "no le interesa" son los dos un descarte, pero solo el primero
+// significa que el proveedor cobro por algo que no era un lead.
+function sumarA(bucket, clasificacion) {
   bucket.total += 1;
-  bucket[categoria] += 1;
+  bucket[clasificacion.categoria] += 1;
+  if (clasificacion.motivoCapturado) bucket.conMotivo += 1;
+  if (clasificacion.trash) bucket.trash += 1;
+  else if (clasificacion.noVendio) bucket.noVendio += 1;
 }
 
 // Agrega los porcentajes y la tasa de aprovechamiento a un bucket ya
@@ -101,8 +132,23 @@ function cerrarBucket(bucket) {
     porcentajes: Object.fromEntries(CATEGORIAS.map((c) => [c.clave, pct(bucket[c.clave])])),
     basura,
     porcentajeBasura: pct(basura),
-    // Concretadas sobre el total recibido. Es la cifra que de verdad mide
-    // al proveedor: no cuantos mando, cuantos sirvieron.
+    // --- Las dos cifras con las que se presupuesta ---
+    //
+    // `porcentajeTrash` es lo que el proveedor cobro y no era un lead.
+    // `porcentajeCalidad` es su complemento: de cada cien que manda,
+    // cuantos de verdad se pudieron trabajar. Con 20% de calidad, para 40
+    // ventas hay que pedir 200 leads.
+    //
+    // Un "no le interesa" NO entra aqui: el lead era real y contesto. Si
+    // contara como trash, el porcentaje saldria castigado y se pediria de
+    // mas, que es el error que este corte existe para evitar.
+    porcentajeTrash: pct(bucket.trash),
+    porcentajeCalidad: bucket.total > 0 ? 100 - pct(bucket.trash) : 0,
+    porcentajeNoVendio: pct(bucket.noVendio),
+    // Que tan confiable es lo de arriba: los leads viejos no traen motivo
+    // capturado y su clasificacion es deducida del historial de llamadas.
+    porcentajeConMotivo: pct(bucket.conMotivo),
+    // Concretadas sobre el total recibido.
     conversion: pct(bucket.CONCRETADA),
   };
 }
@@ -132,16 +178,26 @@ function agregar(leads, resumenPorLead, umbralIntentos, filtro = () => true) {
     const llamadas = resumenPorLead.get(lead.id);
     const categoria = clasificarLead(lead, llamadas, umbralIntentos);
 
-    sumarA(total, categoria);
-    sumarA(bucketDe(porVendedor, lead.vendedorId ?? 0, lead.vendedor?.nombre ?? "Sin asignar"), categoria);
+    // El segundo eje: basura del proveedor o descarte comercial. Con motivo
+    // capturado sale del catalogo; sin el, se infiere de la categoria --
+    // "no existe" y "no contesto" son basura, el resto no se puede saber.
+    const motivoCapturado = Boolean(lead.motivoDescarte);
+    const trash = motivoCapturado
+      ? esTrash(lead.motivoDescarte)
+      : categoria === "NO_EXISTE" || categoria === "NO_CONTESTO";
+    const noVendio = lead.status === "DESCARTADO" && !trash;
+    const clasificacion = { categoria, trash, noVendio, motivoCapturado };
+
+    sumarA(total, clasificacion);
+    sumarA(bucketDe(porVendedor, lead.vendedorId ?? 0, lead.vendedor?.nombre ?? "Sin asignar"), clasificacion);
     // El reparto automatico no tiene coordinadora detras; mezclarlo con una
     // persona le acreditaria (o le cobraria) leads que no repartio.
-    sumarA(bucketDe(porCoordinador, lead.asignadoPorId ?? 0, lead.asignadoPor?.nombre ?? "Reparto automatico"), categoria);
-    sumarA(bucketDe(porOrigen, lead.source, lead.source === "EXTERNAL_API" ? "API externa" : "Captura manual"), categoria);
-    sumarA(bucketDe(porProducto, lead.producto || "Sin producto", lead.producto || "Sin producto"), categoria);
+    sumarA(bucketDe(porCoordinador, lead.asignadoPorId ?? 0, lead.asignadoPor?.nombre ?? "Reparto automatico"), clasificacion);
+    sumarA(bucketDe(porOrigen, lead.source, lead.source === "EXTERNAL_API" ? "API externa" : "Captura manual"), clasificacion);
+    sumarA(bucketDe(porProducto, lead.producto || "Sin producto", lead.producto || "Sin producto"), clasificacion);
 
     const dia = diaLocal(lead.createdAt);
-    sumarA(bucketDe(porDia, dia, dia), categoria);
+    sumarA(bucketDe(porDia, dia, dia), clasificacion);
 
     const intentos = llamadas?.intentos ?? 0;
     if (intentos === 0) {

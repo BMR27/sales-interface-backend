@@ -5,6 +5,7 @@ const multer = require("multer");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const gestionAdmin = require("../middleware/gestionAdmin");
+const { siguienteFolio } = require("../lib/folios");
 
 // Roles que un administrador puede darle a alguien de su espacio. SUPER_ADMIN
 // queda fuera: es nivel plataforma y no se reparte desde aqui.
@@ -187,6 +188,7 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
         const edadNum = Number(data.edad);
         const creado = await prisma.lead.create({
           data: {
+            folioPS: await siguienteFolio(req.user.tenantId),
             nombre: String(data.nombre),
             apellido: data.apellido ? String(data.apellido) : null,
             edad: data.edad !== undefined && data.edad !== "" && Number.isFinite(edadNum) ? edadNum : null,
@@ -273,6 +275,9 @@ router.get("/leads", async (req, res) => {
         { nombre: { contains: search, mode: "insensitive" } },
         { producto: { contains: search, mode: "insensitive" } },
         { folio: { contains: search, mode: "insensitive" } },
+        // El folio interno es justo para esto: buscar un lead concreto
+        // cuando el nombre llego mal capturado desde el proveedor.
+        { folioPS: { contains: search, mode: "insensitive" } },
       ];
     }
 

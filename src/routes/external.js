@@ -2,10 +2,11 @@ const express = require("express");
 const { apiKeyMiddleware } = require("../middleware/apiKey");
 const { getNextVendedor } = require("../lib/assignment");
 const { getParametros } = require("../lib/parametros");
+const { siguienteFolio } = require("../lib/folios");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
 const { crearAviso } = require("../lib/avisos");
 const { detallarMovimiento } = require("../lib/auditoria");
-const { aplicarResultadoEntrega } = require("../lib/fullvector");
+const { aplicarResultadoEntrega, marcarCoberturaDeLead } = require("../lib/fullvector");
 const { recalcularQuincena } = require("../lib/comisiones");
 const {
   LEAD_STATUSES,
@@ -107,8 +108,14 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       ? await prisma.producto.findFirst({ where: { sku: internalSku, tenantId } })
       : null;
 
+    // El folio interno se reserva ANTES de crear el lead para que nazca con
+    // el: un lead sin folio no se puede referenciar por telefono, que es
+    // justo para lo que existe.
+    const folioPS = await siguienteFolio(tenantId);
+
     const lead = await prisma.lead.create({
       data: {
+        folioPS,
         nombre: nombreCompleto,
         apellido: lastName || null,
         edad: Number.isFinite(Number(age)) && age !== "" && age != null ? Number(age) : null,
@@ -157,6 +164,12 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
     });
 
     notificarLeadNuevo(lead, { vendedor, origen: "api_externa" });
+
+    // La marca FC FV se calcula de una vez, para que el lead ya llegue
+    // etiquetado a la cola y la vendedora lo sepa antes de marcar. Es
+    // fire-and-forget: que FullVector no conteste no puede tumbar el alta
+    // del lead, y el panel de llamada vuelve a consultarlo de todos modos.
+    marcarCoberturaDeLead(lead.id).catch(() => {});
 
     // Con reparto automático el lead aparece en la cola de alguien sin que
     // nadie se lo haya dicho; el aviso en pantalla es lo que lo hace visible.

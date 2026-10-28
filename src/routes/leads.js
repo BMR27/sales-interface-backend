@@ -2,6 +2,8 @@ const express = require("express");
 const crypto = require("crypto");
 const authMiddleware = require("../middleware/auth");
 const { requirePermiso } = require("../lib/permisosCatalog");
+const { siguienteFolio } = require("../lib/folios");
+const { MOTIVOS, parseMotivo, esTrash } = require("../lib/motivosDescarte");
 const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
 const { LEAD_STATUSES, LEAD_STATUSES_ABIERTOS, parseLeadStatus } = require("../lib/leadStatus");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
@@ -62,6 +64,15 @@ router.get("/", authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/leads/motivos-descarte — el catalogo, para que la pantalla lo
+// dibuje sin tenerlo duplicado del lado del navegador.
+//
+// Va ANTES de GET /:id a proposito: Express casa por orden de declaracion,
+// y declarada despues caeria en el comodin del id.
+router.get("/motivos-descarte", authMiddleware, (req, res) => {
+  res.json({ motivos: MOTIVOS });
+});
+
 // GET /api/leads/:id
 router.get("/:id", authMiddleware, async (req, res) => {
   try {
@@ -87,6 +98,7 @@ router.post("/", authMiddleware, async (req, res) => {
     const lead = await prisma.lead.create({
       data: {
         nombre, apellido: apellido || null, edad: edad ? Number(edad) : null,
+        folioPS: await siguienteFolio(req.user.tenantId),
         telefono, producto, cantidad: cantidad || 1, hora, categoria, notas,
         country: country || null, city: city || null, ip: ip || null,
         productoId: productoId || null,
@@ -208,13 +220,31 @@ router.get("/:id/historial", authMiddleware, async (req, res) => {
 router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
+    // El motivo es del catalogo cerrado, no texto libre: de aqui sale el
+    // porcentaje de calidad de la base y para medir hace falta un conjunto
+    // cerrado (ver src/lib/motivosDescarte.js). La nota es el texto libre
+    // que lo acompaña, opcional.
+    const motivo = parseMotivo(req.body?.motivo);
+    if (req.body?.motivo && !motivo) {
+      return res.status(400).json({ error: "Motivo de descarte invalido" });
+    }
+    const nota = typeof req.body?.nota === "string" ? req.body.nota.trim().slice(0, 300) : null;
     const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
     if (existing.status === "VENTA") {
       return res.status(409).json({ error: "Este lead ya tiene una venta cerrada" });
     }
 
-    await prisma.lead.update({ where: { id }, data: { status: "DESCARTADO" } });
+    await prisma.lead.update({
+      where: { id },
+      data: {
+        status: "DESCARTADO",
+        motivoDescarte: motivo,
+        motivoDescarteNota: nota || null,
+        descartadoAt: new Date(),
+        descartadoPorId: req.user.id,
+      },
+    });
 
     // Descartar es el desenlace de una llamada: sin esto, el historial del
     // lead mostraba el intento pero nunca en qué había terminado.
