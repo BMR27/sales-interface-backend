@@ -144,7 +144,52 @@ router.put("/tenants/:id/facturacion", async (req, res) => {
   }
 });
 
-// POST /api/superadmin/tenants/:id/impersonate
+// A donde entra el "Ver como" segun el rol prestado. Es el mismo mapa que
+// usa el front en lib/guard.ts; se manda desde aqui para que el superadmin
+// no tenga que adivinar a que pantalla ir.
+const INICIO_POR_ROL = {
+  ADMIN: "/admin",
+  ADMIN_OPERATIVO: "/admin",
+  COORDINADOR: "/coordinador",
+  PROVEEDOR_LEADS: "/proveedor",
+  VENDEDOR: "/leads",
+};
+
+// Roles que se pueden prestar. SUPER_ADMIN queda fuera a proposito: no hay
+// nada que ver que el superadmin no vea ya, y encadenar impersonaciones
+// hace imposible auditar quien hizo que.
+const ROLES_IMPERSONABLES = Object.keys(INICIO_POR_ROL);
+
+// GET /api/superadmin/tenants/:id/usuarios
+//
+// A quien se puede "ver como" dentro de un espacio. La pantalla necesita a
+// la persona concreta, no solo el rol: la vista de una vendedora son sus
+// leads, y sin un usuario real no hay nada que mostrar.
+router.get("/tenants/:id/usuarios", async (req, res) => {
+  try {
+    const tenantId = Number(req.params.id);
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+    if (!tenant) return res.status(404).json({ error: "Espacio no encontrado" });
+
+    const usuarios = await prisma.user.findMany({
+      where: { tenantId, activo: true, rol: { in: ROLES_IMPERSONABLES } },
+      select: { id: true, nombre: true, email: true, rol: true },
+      orderBy: [{ rol: "asc" }, { nombre: "asc" }],
+    });
+
+    res.json(usuarios);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/superadmin/tenants/:id/impersonate   body: { userId? }
+//
+// Sin userId se entra como administrador generico del espacio (la vista de
+// siempre). Con userId se toma prestada la vista de esa persona -- su rol,
+// sus leads, su menu -- que es la unica forma de ver lo que ella ve cuando
+// reporta un problema.
 router.post("/tenants/:id/impersonate", async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -154,13 +199,39 @@ router.post("/tenants/:id/impersonate", async (req, res) => {
       return res.status(400).json({ error: "Solo se puede ver espacios activos" });
     }
 
-    const nombre = `${tenant.nombreComercial || tenant.razonSocial} (vista superadmin)`;
+    const { userId } = req.body || {};
+    let destinatario = null;
+
+    if (userId) {
+      destinatario = await prisma.user.findFirst({
+        where: { id: Number(userId), tenantId: tenant.id, activo: true },
+        select: { id: true, nombre: true, email: true, rol: true },
+      });
+      if (!destinatario) {
+        return res.status(404).json({ error: "Usuario no encontrado en este espacio" });
+      }
+      if (!ROLES_IMPERSONABLES.includes(destinatario.rol)) {
+        return res.status(400).json({ error: "No se puede ver como ese rol" });
+      }
+    }
+
+    const etiqueta = tenant.nombreComercial || tenant.razonSocial;
+    const nombre = destinatario
+      ? `${destinatario.nombre} (vista superadmin)`
+      : `${etiqueta} (vista superadmin)`;
+    const rol = destinatario ? destinatario.rol : "ADMIN";
+    const email = destinatario ? destinatario.email : tenant.emailContacto;
+    // El id real importa: la cola de una vendedora se arma con
+    // `vendedorId: req.user.id`, asi que sin el no habria nada que ver.
+    // Las escrituras quedan a su nombre, por eso el token lleva
+    // `impersonatedBy` y la pantalla avisa con una banda fija.
+    const userIdFinal = destinatario ? destinatario.id : null;
 
     const token = jwt.sign(
       {
-        id: null,
-        email: tenant.emailContacto,
-        rol: "ADMIN",
+        id: userIdFinal,
+        email,
+        rol,
         nombre,
         tenantId: tenant.id,
         tenantStatus: tenant.status,
@@ -172,7 +243,8 @@ router.post("/tenants/:id/impersonate", async (req, res) => {
 
     res.json({
       token,
-      user: { id: null, nombre, email: tenant.emailContacto, rol: "ADMIN", tenantId: tenant.id },
+      user: { id: userIdFinal, nombre, email, rol, tenantId: tenant.id },
+      destino: INICIO_POR_ROL[rol] || "/admin",
     });
   } catch (err) {
     console.error(err);
