@@ -205,6 +205,7 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
             internalSku: data.internalSku ? String(data.internalSku) : null,
             productoId,
             vendedorId: vendedor?.id ?? null,
+            asignadoAt: vendedor ? new Date() : null,
             source: "MANUAL",
             tenantId,
           },
@@ -330,7 +331,9 @@ router.put("/leads/:id/reassign", async (req, res) => {
 
     const lead = await prisma.lead.update({
       where: { id: existing.id },
-      data: { vendedorId },
+      // asignadoAt: la reasignacion es trabajo del dia en que se hace, no
+      // del dia en que el lead entro (ver el reporte de Progreso).
+      data: { vendedorId, asignadoAt: new Date() },
       include: { vendedor: { select: { id: true, nombre: true } } },
     });
 

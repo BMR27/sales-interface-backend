@@ -196,7 +196,15 @@ router.post("/leads/asignar", async (req, res) => {
       where: { id: { in: antes.map((l) => l.id) }, tenantId: req.user.tenantId },
       // Queda registrado quien repartio: es a esa coordinadora a la que se
       // le acredita la comision por la venta que salga del lead.
-      data: { vendedorId: vendedor.id, asignadoPorCoordinador: true, asignadoPorId: req.user.id },
+      data: {
+        vendedorId: vendedor.id,
+        asignadoPorCoordinador: true,
+        asignadoPorId: req.user.id,
+        // El reparto es lo que vuelve a este lead trabajo de hoy, aunque
+        // haya entrado hace tres dias: sin esta marca el reporte de
+        // Progreso lo seguiria contando en el dia en que llego.
+        asignadoAt: new Date(),
+      },
     });
 
     // El kardex necesita saber a quien se le quito el lead, no solo a quien
@@ -275,9 +283,17 @@ router.get("/progreso", async (req, res) => {
 
     const tenantId = req.user.tenantId;
 
+    // El dia de trabajo no son solo los leads que entraron hoy: tambien los
+    // que hoy se repartieron, aunque hayan llegado hace una semana. Cuando
+    // esto miraba solo createdAt, la coordinadora asignaba 25 leads
+    // reasignados a una vendedora y la fila seguia en cero.
+    const enRango = { gte: inicio, lte: fin };
     const [leads, vendedoras] = await Promise.all([
       prisma.lead.findMany({
-        where: { tenantId, createdAt: { gte: inicio, lte: fin } },
+        where: {
+          tenantId,
+          OR: [{ createdAt: enRango }, { asignadoAt: enRango }],
+        },
         orderBy: { createdAt: "desc" },
         include: {
           vendedor: { select: { id: true, nombre: true } },
@@ -305,9 +321,16 @@ router.get("/progreso", async (req, res) => {
 
     const ahora = new Date();
 
+    // Un lead que entro antes del rango y se repartio dentro de el es
+    // trabajo del dia en que se repartio: ahi es donde tiene que contar.
+    const dentro = (f) => f && f >= inicio && f <= fin;
+    const esReasignado = (lead) => dentro(lead.asignadoAt) && !dentro(lead.createdAt);
+    const fechaDelCorte = (lead) => (esReasignado(lead) ? lead.asignadoAt : lead.createdAt);
+
     // Corte del dia: lo que la coordinadora quiere saber de un vistazo.
     const resumen = {
       total: leads.length,
+      reasignados: 0,
       sinAsignar: 0,
       sinIntentos: 0,
       nuevos: 0,
@@ -324,14 +347,16 @@ router.get("/progreso", async (req, res) => {
     const porVendedora = Object.fromEntries(
       vendedoras.map((v) => [v.id, {
         id: v.id, nombre: v.nombre,
-        asignados: 0, sinIntentos: 0, concretados: 0, descartados: 0, abiertos: 0, monto: 0,
+        asignados: 0, reasignados: 0, sinIntentos: 0, concretados: 0, descartados: 0, abiertos: 0, monto: 0,
       }])
     );
 
     for (const lead of leads) {
       const n = intentosPorLead[lead.id] ?? 0;
+      const reasignado = esReasignado(lead);
       if (n === 0) resumen.sinIntentos += 1;
       if (!lead.vendedorId) resumen.sinAsignar += 1;
+      if (reasignado) resumen.reasignados += 1;
 
       if (lead.status === "NUEVO") resumen.nuevos += 1;
       else if (lead.status === "REAGENDADO") resumen.reagendados += 1;
@@ -348,6 +373,7 @@ router.get("/progreso", async (req, res) => {
       const b = porVendedora[lead.vendedorId];
       if (b) {
         b.asignados += 1;
+        if (reasignado) b.reasignados += 1;
         if (n === 0) b.sinIntentos += 1;
         if (lead.status === "VENTA") { b.concretados += 1; b.monto += monto; }
         else if (lead.status === "DESCARTADO") b.descartados += 1;
@@ -359,7 +385,7 @@ router.get("/progreso", async (req, res) => {
     // semana o un rango es justo la pregunta ("¿que dia se cayo?").
     const porDia = new Map();
     for (const lead of leads) {
-      const dia = diaLocal(lead.createdAt);
+      const dia = diaLocal(fechaDelCorte(lead));
       if (!porDia.has(dia)) porDia.set(dia, { dia, total: 0, concretados: 0, descartados: 0, monto: 0 });
       const d = porDia.get(dia);
       d.total += 1;
@@ -385,6 +411,9 @@ router.get("/progreso", async (req, res) => {
         ...l,
         intentos: intentosPorLead[l.id] ?? 0,
         reagendaVencida: vencidos.includes(l.id),
+        // Para que la lista pueda explicar por que un lead de otro dia
+        // aparece en el corte de hoy.
+        reasignado: esReasignado(l),
         monto: l.venta?.monto ?? null,
       })),
     });
@@ -611,6 +640,7 @@ router.post("/leads/:id/reactivar", async (req, res) => {
       data: {
         status: "NUEVO",
         vendedorId: null,
+        asignadoAt: null,
         asignadoPorCoordinador: false,
         devueltoAt: new Date(),
         devueltoMotivo: motivo || "Descartado por error, reactivado para volver a llamar",

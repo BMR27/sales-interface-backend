@@ -137,6 +137,7 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
         categoria: category,
         folio,
         vendedorId: vendedor?.id ?? null,
+        asignadoAt: vendedor ? new Date() : null,
         source: "EXTERNAL_API",
         country,
         city: city || null,

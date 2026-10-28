@@ -199,6 +199,12 @@ model Lead {
   productoCatalogo Producto? @relation(fields: [productoId], references: [id])
 
   fechaReagenda          DateTime?
+  // Cuando este lead paso a manos de su vendedora actual. No es lo mismo que
+  // createdAt: un lead de hace tres dias que hoy se reasigna es trabajo de
+  // hoy, y el reporte de Progreso lo contaba como del dia en que entro -- la
+  // coordinadora repartia 50 leads y la pantalla seguia en cero. Se limpia
+  // cuando el lead vuelve a la cola sin dueño.
+  asignadoAt             DateTime?
   asignadoPorCoordinador Boolean   @default(false)
   // Coordinadora que repartio este lead. Es la que cobra los $12 de la venta
   // que salga de el (ver src/lib/comisiones.js); null cuando lo asigno el

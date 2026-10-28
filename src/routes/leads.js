@@ -103,6 +103,7 @@ router.post("/", authMiddleware, async (req, res) => {
         country: country || null, city: city || null, ip: ip || null,
         productoId: productoId || null,
         vendedorId: req.user.id,
+        asignadoAt: new Date(),
         tenantId: req.user.tenantId,
       },
     });
@@ -311,6 +312,7 @@ router.post("/:id/supervision", authMiddleware, async (req, res) => {
         // Sale de la lista de la vendedora y entra a la cola marcado, para
         // que la coordinadora lo vea y no se pierda entre los demas.
         vendedorId: null,
+        asignadoAt: null,
         asignadoPorCoordinador: false,
         requiereSupervision: true,
         supervisionNota: nota || null,
@@ -366,6 +368,7 @@ router.post("/:id/devolver", authMiddleware, requirePermiso("vendedor.leads.devo
       where: { id },
       data: {
         vendedorId: null,
+        asignadoAt: null,
         asignadoPorCoordinador: false,
         devueltoAt: new Date(),
         devueltoMotivo: motivo || "No contestó durante el turno",

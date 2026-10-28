@@ -67,6 +67,7 @@ async function aplicarProtocoloNoContesto({ leadId, tenantId }) {
       where: { id: leadId },
       data: {
         vendedorId: null,
+        asignadoAt: null,
         asignadoPorCoordinador: false,
         disponibleDesde: new Date(Date.now() + esperaMs),
         devueltoAt: new Date(),
