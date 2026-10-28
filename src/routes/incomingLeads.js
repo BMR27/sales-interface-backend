@@ -53,6 +53,10 @@ router.get("/campos", async (req, res) => {
       "folio", "consumerName", "phone", "country", "state", "zipCode",
       "category", "product", "internalSku", "externalSku",
       "firstName", "lastName", "age", "city", "ip",
+      // Las dos grafias que acepta la ingesta para el identificador de
+      // comprador. Sin esto se seguirian reportando como "llega pero nadie
+      // lo lee", que dejo de ser cierto.
+      "buyerId", "buyer_id",
     ]);
 
     res.json({
