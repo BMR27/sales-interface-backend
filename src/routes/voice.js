@@ -55,21 +55,29 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
 
   try {
     const vendedor = vendedorId
-      ? await prisma.user.findUnique({ where: { id: vendedorId }, select: { id: true, tenantId: true } })
+      ? await prisma.user.findUnique({ where: { id: vendedorId }, select: { id: true, tenantId: true, rol: true } })
       : null;
 
     if (vendedor?.tenantId && callSid) {
       const params = await getParametros(vendedor.tenantId);
       grabar = params.grabacionLlamadas;
 
+      // La vendedora solo puede marcarle a sus leads. La coordinadora, a
+      // cualquiera de su empresa: ensenar a llamar es parte de su trabajo
+      // (ver filtroLead en src/routes/llamada.js). En los dos casos el
+      // numero lo resuelve el servidor, nunca el navegador.
+      const dondeBuscar = vendedor.rol === "COORDINADOR"
+        ? { id: leadIdCrudo, tenantId: vendedor.tenantId }
+        : { id: leadIdCrudo, vendedorId: vendedor.id };
+
       const lead = Number.isInteger(leadIdCrudo)
         ? await prisma.lead.findFirst({
-            where: { id: leadIdCrudo, vendedorId: vendedor.id },
+            where: dondeBuscar,
             select: { id: true, status: true, telefono: true },
           })
         : null;
 
-      // Solo se marca a un lead que de verdad es de quien llama.
+      // Solo se marca a un lead al que de verdad se le puede llamar.
       if (lead) to = lead.telefono;
 
       // El intento queda registrado SIEMPRE, se grabe o no: el historial de

@@ -4,6 +4,22 @@ const { requirePermiso } = require("../lib/permisosCatalog");
 const { registrarResultado } = require("../lib/historialLlamadas");
 const { ocultarTelefonoLead } = require("../lib/telefono");
 
+// Quien puede abrir y trabajar un lead desde el panel de llamada.
+//
+// La vendedora, solo los suyos. La coordinadora, cualquiera de su empresa:
+// su papel incluye enseñar a llamar, y para eso se sienta con la vendedora
+// sobre el lead que esa vendedora tiene enfrente.
+//
+// El intento queda registrado a nombre de quien marca (Llamada.vendedorId
+// es una relacion a User, no solo a vendedoras), asi que el historial del
+// lead dice la verdad: llamo la coordinadora.
+function filtroLead(user, leadId) {
+  if (user.rol === "COORDINADOR") {
+    return { id: leadId, tenantId: user.tenantId };
+  }
+  return { id: leadId, vendedorId: user.id };
+}
+
 const router = express.Router();
 const prisma = require("../lib/prisma");
 
@@ -11,7 +27,7 @@ const prisma = require("../lib/prisma");
 router.get("/:id", authMiddleware, async (req, res) => {
   try {
     const lead = await prisma.lead.findFirst({
-      where: { id: parseInt(req.params.id), vendedorId: req.user.id },
+      where: filtroLead(req.user, parseInt(req.params.id)),
       include: {
         productoCatalogo: true,
         items: { include: { producto: true } },
@@ -65,7 +81,7 @@ router.post("/:id/confirmar", authMiddleware, requirePermiso("vendedor.leads.con
     const { duracion, resultado, notas, aceptoOferta, items } = req.body;
 
     const lead = await prisma.lead.findFirst({
-      where: { id: leadId, vendedorId: req.user.id },
+      where: filtroLead(req.user, leadId),
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
     if (lead.status === "VENTA") {
@@ -156,7 +172,7 @@ router.post("/:id/reagendar", authMiddleware, requirePermiso("vendedor.leads.rea
     const { fecha, notas } = req.body;
 
     const lead = await prisma.lead.findFirst({
-      where: { id: leadId, vendedorId: req.user.id },
+      where: filtroLead(req.user, leadId),
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
     if (lead.status === "VENTA") {

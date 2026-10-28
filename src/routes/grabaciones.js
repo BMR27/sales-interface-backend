@@ -8,14 +8,27 @@
 const express = require("express");
 const { Readable } = require("stream");
 const authMiddleware = require("../middleware/auth");
-const adminMiddleware = require("../middleware/admin");
+
 const { registrar } = require("../lib/auditoria");
 const { rangoFechas } = require("../lib/fechasLocales");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
 
-router.use(authMiddleware, adminMiddleware);
+// Quien escucha las grabaciones: los dos administradores y la
+// coordinadora. Para los dos ultimos es la unica pestaña que conservan
+// dentro de Configuracion, junto a su perfil.
+//
+// La vendedora NO entra: son sus propias llamadas y el proposito del
+// modulo es supervisarla, no darle la supervision.
+const ROLES_GRABACIONES = ["ADMIN", "ADMIN_OPERATIVO", "COORDINADOR"];
+
+router.use(authMiddleware, (req, res, next) => {
+  if (!ROLES_GRABACIONES.includes(req.user?.rol)) {
+    return res.status(403).json({ error: "Acceso restringido" });
+  }
+  next();
+});
 
 function credencialesTwilio() {
   const sid = process.env.TWILIO_ACCOUNT_SID;
