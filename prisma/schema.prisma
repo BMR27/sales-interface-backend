@@ -219,6 +219,25 @@ model Lead {
   // no texto libre: de aqui sale el porcentaje de calidad de la base que
   // manda el proveedor, y para medir hace falta un conjunto cerrado.
   // Null en los leads descartados antes de que existiera el catalogo.
+  // Protocolo de reintento: cuando el cliente no contesta, el lead vuelve
+  // a la fila pero no debe reaparecer de inmediato -- marcarle tres veces
+  // seguidas en cinco minutos no es insistir, es quemarlo. Hasta esta
+  // fecha no se reparte (ver src/lib/protocoloLeads.js).
+  disponibleDesde   DateTime?
+
+  // El cliente pidio que le llamaran en otro momento y la vendedora no
+  // puede atenderlo: pasa a la coordinadora, que decide si lo llama ella o
+  // se lo da a alguien mas. No es lo mismo que reagendar a secas, que deja
+  // el lead con la misma vendedora.
+  requiereSupervision Boolean  @default(false)
+  supervisionNota     String?
+  supervisionPedidaAt DateTime?
+
+  // Peticiones que no se pueden prever y que PS decide satisfacer -- un
+  // combo especial, por ejemplo. Texto libre a proposito: justamente son
+  // las que no caben en un catalogo.
+  solicitudEspecial String?
+
   motivoDescarte    String?
   motivoDescarteNota String?
   descartadoAt      DateTime?

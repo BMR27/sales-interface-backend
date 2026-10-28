@@ -4,6 +4,7 @@ const twilioSignatureMiddleware = require("../middleware/twilioSignature");
 const { generateVoiceToken, buildDialTwiml, vendedorIdDesdeFrom } = require("../lib/twilioVoice");
 const { getParametros } = require("../lib/parametros");
 const { registrarIntento, registrarDesenlace } = require("../lib/historialLlamadas");
+const { aplicarProtocoloNoContesto } = require("../lib/protocoloLeads");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -173,6 +174,18 @@ router.post("/llamada-fin", twilioSignatureMiddleware, async (req, res) => {
         where: { callSid: CallSid, estado: "EN_CURSO" },
         data: { estado: "FALLIDA", error: DialCallStatus },
       });
+
+      // Nadie contestó: el protocolo decide si el lead vuelve a la fila
+      // tras una espera o si ya se agotaron los intentos (ver
+      // src/lib/protocoloLeads.js). Va aquí y no en el panel porque la
+      // vendedora puede cerrar la pestaña sin registrar nada.
+      const intento = await prisma.llamada.findUnique({
+        where: { callSid: CallSid },
+        select: { leadId: true, tenantId: true },
+      });
+      if (intento?.leadId) {
+        await aplicarProtocoloNoContesto({ leadId: intento.leadId, tenantId: intento.tenantId });
+      }
     }
   } catch (err) {
     console.error("no se pudo registrar el fin de la llamada", err);

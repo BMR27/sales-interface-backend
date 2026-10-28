@@ -128,6 +128,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
 
     const {
       nombre, telefono, producto, cantidad, hora, status, folio, monto, categoria, notas,
+      solicitudEspecial,
       shippingStreet, shippingNumber, shippingReferences, zipCode, state, colonia, municipio, lat, lng,
     } = req.body;
 
@@ -139,6 +140,12 @@ router.put("/:id", authMiddleware, async (req, res) => {
       where: { id },
       data: {
         nombre, producto, cantidad, hora, status, folio, monto, categoria, notas,
+        // Peticiones que no caben en ningun catalogo -- un combo especial,
+        // por ejemplo. Solo se toca si viene en el body, para que un PUT
+        // de direccion no borre lo que la vendedora ya habia anotado.
+        ...(solicitudEspecial !== undefined
+          ? { solicitudEspecial: String(solicitudEspecial).trim().slice(0, 500) || null }
+          : {}),
         shippingStreet, shippingNumber, shippingReferences, zipCode, state, colonia, municipio, lat, lng,
         // Quien no puede VER el telefono tampoco puede escribirlo. Sin esta
         // guarda, una pantalla que reenviara el valor que recibio grabaria
@@ -265,6 +272,68 @@ router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"),
     });
 
     res.json({ message: "Lead descartado" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/leads/:id/supervision — la vendedora no puede atender lo que
+// el cliente pidio (quiere que le llamen otro dia, en otro horario, fuera
+// de su turno) y lo pasa a la coordinadora, que decide si lo llama ella o
+// se lo da a alguien mas.
+//
+// No es lo mismo que reagendar: reagendar deja el lead con la misma
+// vendedora, y aqui justamente el punto es que ella no va a poder.
+router.post("/:id/supervision", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const nota = typeof req.body?.nota === "string" ? req.body.nota.trim().slice(0, 300) : "";
+    const fechaReagenda = req.body?.fechaReagenda ? new Date(req.body.fechaReagenda) : null;
+    if (fechaReagenda && Number.isNaN(fechaReagenda.getTime())) {
+      return res.status(400).json({ error: "Fecha de re-llamada invalida" });
+    }
+
+    const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
+    if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
+    if (!LEAD_STATUSES_ABIERTOS.includes(existing.status)) {
+      return res.status(409).json({
+        error:
+          existing.status === "VENTA"
+            ? "Este lead ya tiene una venta cerrada"
+            : "Este lead ya fue descartado",
+      });
+    }
+
+    const lead = await prisma.lead.update({
+      where: { id },
+      data: {
+        // Sale de la lista de la vendedora y entra a la cola marcado, para
+        // que la coordinadora lo vea y no se pierda entre los demas.
+        vendedorId: null,
+        asignadoPorCoordinador: false,
+        requiereSupervision: true,
+        supervisionNota: nota || null,
+        supervisionPedidaAt: new Date(),
+        status: fechaReagenda ? "REAGENDADO" : existing.status,
+        ...(fechaReagenda ? { fechaReagenda } : {}),
+        // La espera del protocolo no aplica: aqui no es que no contestara,
+        // es que el cliente pidio algo concreto y hay que atenderlo.
+        disponibleDesde: null,
+        devueltoAt: new Date(),
+        devueltoMotivo: nota || "El cliente pidio que le llamaran en otro momento",
+        devueltoPorNombre: req.user.nombre || "Vendedora",
+      },
+    });
+
+    detallarMovimiento(req, {
+      entidadId: id,
+      descripcion: `Pasó a supervisión el lead ${lead.nombre}`,
+      antes: existing,
+      despues: lead,
+    });
+
+    res.json({ ok: true, lead: await ocultarTelefonoLead(lead, req.user) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

@@ -50,9 +50,12 @@ const DEFINICION = {
       "Pasado este plazo el audio se borra solo de Twilio y queda unicamente el registro de que la llamada existio. Conservar de mas cuesta almacenamiento y amplia lo que tendrias que entregar ante una solicitud de datos.",
     grupo: "Llamadas",
   },
-  // Cuantos intentos sin respuesta hacen falta para dar un lead por basura
-  // en el tablero de calidad (ver src/lib/calidadLeads.js). Solo afecta como
-  // se cuenta: no descarta el lead ni le impide a nadie volver a marcarle.
+  // Cuantos intentos sin respuesta agotan a un lead. Manda dos cosas: el
+  // descarte automatico del protocolo (ver src/lib/protocoloLeads.js) y
+  // como se cuenta en el tablero de calidad (src/lib/calidadLeads.js). Son
+  // el mismo numero a proposito: si el reporte y la operacion usaran
+  // umbrales distintos, el tablero contaria basura que la operacion sigue
+  // llamando.
   calidadIntentosNoContesto: {
     default: 3,
     min: 1,
@@ -60,7 +63,28 @@ const DEFINICION = {
     label: "Intentos para contar un lead como 'no contesto'",
     sufijo: "intentos",
     ayuda:
-      "En el tablero de Calidad de leads, un lead al que se le marco esta cantidad de veces sin que nunca conteste se cuenta como basura. Es solo para el reporte: el lead sigue vivo y se le puede seguir llamando.",
+      "Cuantas veces se le marca a un lead que nunca contesta antes de darlo por perdido. Al llegar a este numero el lead se descarta solo con motivo 'No contesto' y cuenta como basura de la base en el tablero de Calidad.",
+    grupo: "Calidad de leads",
+  },
+  // Entre intento e intento tiene que pasar un rato. Marcarle tres veces
+  // seguidas en cinco minutos no es insistir, es quemar al cliente -- y
+  // ademas agota el protocolo sin haberle dado una oportunidad real.
+  reintentoEsperaMinutos: {
+    default: 90,
+    min: 5,
+    max: 1440,
+    label: "Espera entre intentos de llamada",
+    sufijo: "minutos",
+    ayuda:
+      "Cuando el cliente no contesta, el lead vuelve a la fila pero no se reparte hasta que pase este tiempo. Puede tomarlo otra vendedora y otro dia.",
+    grupo: "Calidad de leads",
+  },
+  reintentoAutomatico: {
+    tipo: "boolean",
+    default: true,
+    label: "Reintento automatico por no contestar",
+    ayuda:
+      "Encendido, un lead que no contesta regresa solo a la fila tras la espera, y al agotar los intentos se descarta solo como 'No contesto'. Apagado, la vendedora lo devuelve a mano como hasta ahora.",
     grupo: "Calidad de leads",
   },
   comisionPorcentaje: {

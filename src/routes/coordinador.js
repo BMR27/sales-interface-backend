@@ -10,6 +10,7 @@ const { crearAviso, crearAvisos } = require("../lib/avisos");
 const router = express.Router();
 const prisma = require("../lib/prisma");
 const { inicioDeDia, finDeDia, inicioDeHoy, diaLocal } = require("../lib/fechasLocales");
+const { filtroDisponible } = require("../lib/protocoloLeads");
 
 router.use(authMiddleware, coordinacionMiddleware);
 
@@ -113,7 +114,7 @@ router.get("/vendedores", async (req, res) => {
 // GET /api/coordinador/leads
 router.get("/leads", async (req, res) => {
   try {
-    const { state, productoId, search, asignacion } = req.query;
+    const { state, productoId, search, asignacion, supervision } = req.query;
     const where = { tenantId: req.user.tenantId };
 
     // Los dos filtros de abajo son OR por dentro, asi que van en un AND:
@@ -130,7 +131,16 @@ router.get("/leads", async (req, res) => {
       where.vendedorId = { not: null };
     } else if (asignacion !== "todos") {
       where.vendedorId = null;
+      // Un lead que acaba de rebotar por no contestar sigue en la cola
+      // pero no se reparte hasta que pase su espera: entregarlo de
+      // inmediato seria marcarle tres veces en cinco minutos.
+      filtros.push(filtroDisponible());
     }
+
+    // Los que la vendedora paso a supervision: el cliente pidio algo
+    // concreto y alguien tiene que decidir. Van aparte porque se pierden
+    // entre los leads nuevos de la cola.
+    if (supervision === "si") where.requiereSupervision = true;
 
     if (state) where.state = state;
     if (productoId) where.productoId = parseInt(productoId);
