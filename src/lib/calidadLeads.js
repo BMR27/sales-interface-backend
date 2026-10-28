@@ -18,7 +18,7 @@
 
 const { getParametros } = require("./parametros");
 const { diaLocal, horaLocal } = require("./fechasLocales");
-const { esTrash, POR_CLAVE } = require("./motivosDescarte");
+const { esTrash, POR_CLAVE, MOTIVOS } = require("./motivosDescarte");
 
 // Twilio DialCallStatus: completed, busy, no-answer, failed, canceled.
 // "failed" es el que la red devuelve cuando el numero no se puede alcanzar:
@@ -163,6 +163,10 @@ function agregar(leads, resumenPorLead, umbralIntentos, filtro = () => true) {
   const porOrigen = new Map();
   const porProducto = new Map();
   const porDia = new Map();
+  // Cuantos leads murio por cada motivo. Es lo que convierte "80% de
+  // basura" en algo reclamable: no es lo mismo que sean numeros
+  // inexistentes que duplicados, y el proveedor responde distinto.
+  const porMotivo = new Map();
   // Cuantos leads se quedan en el intento 1, 2, 3+ sin que nadie conteste,
   // y en que intento se logro el contacto cuando se logro.
   const embudo = { sinLlamar: 0, muerenEn: {}, contactanEn: {} };
@@ -199,6 +203,17 @@ function agregar(leads, resumenPorLead, umbralIntentos, filtro = () => true) {
     const dia = diaLocal(lead.createdAt);
     sumarA(bucketDe(porDia, dia, dia), clasificacion);
 
+    if (lead.motivoDescarte) {
+      const m = porMotivo.get(lead.motivoDescarte) ?? {
+        clave: lead.motivoDescarte,
+        label: POR_CLAVE[lead.motivoDescarte]?.label ?? lead.motivoDescarte,
+        culpaDelProveedor: esTrash(lead.motivoDescarte),
+        total: 0,
+      };
+      m.total += 1;
+      porMotivo.set(lead.motivoDescarte, m);
+    }
+
     const intentos = llamadas?.intentos ?? 0;
     if (intentos === 0) {
       embudo.sinLlamar += 1;
@@ -221,6 +236,9 @@ function agregar(leads, resumenPorLead, umbralIntentos, filtro = () => true) {
     porOrigen: listar(porOrigen),
     porProducto: listar(porProducto).slice(0, 10),
     serie: listar(porDia, (a, b) => a.clave.localeCompare(b.clave)),
+    // Sin cerrarBucket: estas filas son un conteo por motivo, no un bucket
+    // con las seis categorias.
+    porMotivo: Array.from(porMotivo.values()).sort((a, b) => b.total - a.total),
     embudo,
   };
 }
