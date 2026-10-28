@@ -18,6 +18,7 @@ const { notificarLeadsImportados } = require("../lib/notificaciones");
 const { crearAvisos } = require("../lib/avisos");
 const { getParametros } = require("../lib/parametros");
 const { detallarMovimiento } = require("../lib/auditoria");
+const { ROLES_PRESTABLES_A_ADMIN, construirVistaPrestada } = require("../lib/impersonacion");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -578,6 +579,68 @@ router.post("/proveedores/invitacion", adminMiddleware, async (req, res) => {
     const base = process.env.FRONTEND_URL || "";
     const link = `${base}/registro-proveedor?token=${token}`;
     res.status(201).json({ token, link, expiresIn: "7 días" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/admin/ver-como — a quien puede ver el administrador de este
+// espacio. Es su propia gente: la vista de una coordinadora o una vendedora
+// es la de una persona concreta (su cola, sus leads), asi que hay que
+// elegirla. Otro ADMIN queda fuera -- no daria ningun permiso nuevo y si
+// borraria el rastro de quien actuo.
+router.get("/ver-como", adminMiddleware, async (req, res) => {
+  try {
+    const usuarios = await prisma.user.findMany({
+      where: {
+        tenantId: req.user.tenantId,
+        activo: true,
+        rol: { in: ROLES_PRESTABLES_A_ADMIN },
+        id: { not: req.user.id },
+      },
+      select: { id: true, nombre: true, email: true, rol: true },
+      orderBy: [{ rol: "asc" }, { nombre: "asc" }],
+    });
+
+    res.json({ usuarios });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/admin/ver-como — toma prestada la vista de alguien del espacio.
+//
+// No consume la sesion de esa persona ni la saca de la aplicacion: el token
+// es aparte y dura una hora. Lo que se haga queda a su nombre, por eso
+// lleva `impersonatedBy` y la pantalla avisa con una banda fija.
+router.post("/ver-como", adminMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "userId requerido" });
+
+    const usuario = await prisma.user.findFirst({
+      where: { id: Number(userId), tenantId: req.user.tenantId, activo: true },
+      select: { id: true, nombre: true, email: true, rol: true },
+    });
+    if (!usuario) return res.status(404).json({ error: "Usuario no encontrado en tu espacio" });
+    if (!ROLES_PRESTABLES_A_ADMIN.includes(usuario.rol)) {
+      return res.status(400).json({ error: "No se puede ver como ese rol" });
+    }
+    if (usuario.id === req.user.id) {
+      return res.status(400).json({ error: "Esa ya es tu propia vista" });
+    }
+
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.user.tenantId } });
+    if (!tenant) return res.status(404).json({ error: "Espacio no encontrado" });
+
+    detallarMovimiento(req, {
+      entidadId: usuario.id,
+      descripcion: `Entró a ver el sistema como ${usuario.nombre}`,
+    });
+
+    res.json(construirVistaPrestada({ tenant, usuario, porId: req.user.id }));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

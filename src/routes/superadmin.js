@@ -1,7 +1,7 @@
 const express = require("express");
-const jwt = require("jsonwebtoken");
 const authMiddleware = require("../middleware/auth");
 const superAdminMiddleware = require("../middleware/superAdmin");
+const { ROLES_PRESTABLES, construirVistaPrestada } = require("../lib/impersonacion");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -144,22 +144,6 @@ router.put("/tenants/:id/facturacion", async (req, res) => {
   }
 });
 
-// A donde entra el "Ver como" segun el rol prestado. Es el mismo mapa que
-// usa el front en lib/guard.ts; se manda desde aqui para que el superadmin
-// no tenga que adivinar a que pantalla ir.
-const INICIO_POR_ROL = {
-  ADMIN: "/admin",
-  ADMIN_OPERATIVO: "/admin",
-  COORDINADOR: "/coordinador",
-  PROVEEDOR_LEADS: "/proveedor",
-  VENDEDOR: "/leads",
-};
-
-// Roles que se pueden prestar. SUPER_ADMIN queda fuera a proposito: no hay
-// nada que ver que el superadmin no vea ya, y encadenar impersonaciones
-// hace imposible auditar quien hizo que.
-const ROLES_IMPERSONABLES = Object.keys(INICIO_POR_ROL);
-
 // GET /api/superadmin/tenants/:id/usuarios
 //
 // A quien se puede "ver como" dentro de un espacio. La pantalla necesita a
@@ -172,7 +156,7 @@ router.get("/tenants/:id/usuarios", async (req, res) => {
     if (!tenant) return res.status(404).json({ error: "Espacio no encontrado" });
 
     const usuarios = await prisma.user.findMany({
-      where: { tenantId, activo: true, rol: { in: ROLES_IMPERSONABLES } },
+      where: { tenantId, activo: true, rol: { in: ROLES_PRESTABLES } },
       select: { id: true, nombre: true, email: true, rol: true },
       orderBy: [{ rol: "asc" }, { nombre: "asc" }],
     });
@@ -210,42 +194,12 @@ router.post("/tenants/:id/impersonate", async (req, res) => {
       if (!destinatario) {
         return res.status(404).json({ error: "Usuario no encontrado en este espacio" });
       }
-      if (!ROLES_IMPERSONABLES.includes(destinatario.rol)) {
+      if (!ROLES_PRESTABLES.includes(destinatario.rol)) {
         return res.status(400).json({ error: "No se puede ver como ese rol" });
       }
     }
 
-    const etiqueta = tenant.nombreComercial || tenant.razonSocial;
-    const nombre = destinatario
-      ? `${destinatario.nombre} (vista superadmin)`
-      : `${etiqueta} (vista superadmin)`;
-    const rol = destinatario ? destinatario.rol : "ADMIN";
-    const email = destinatario ? destinatario.email : tenant.emailContacto;
-    // El id real importa: la cola de una vendedora se arma con
-    // `vendedorId: req.user.id`, asi que sin el no habria nada que ver.
-    // Las escrituras quedan a su nombre, por eso el token lleva
-    // `impersonatedBy` y la pantalla avisa con una banda fija.
-    const userIdFinal = destinatario ? destinatario.id : null;
-
-    const token = jwt.sign(
-      {
-        id: userIdFinal,
-        email,
-        rol,
-        nombre,
-        tenantId: tenant.id,
-        tenantStatus: tenant.status,
-        impersonatedBy: req.user.id,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
-
-    res.json({
-      token,
-      user: { id: userIdFinal, nombre, email, rol, tenantId: tenant.id },
-      destino: INICIO_POR_ROL[rol] || "/admin",
-    });
+    res.json(construirVistaPrestada({ tenant, usuario: destinatario, porId: req.user.id }));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
