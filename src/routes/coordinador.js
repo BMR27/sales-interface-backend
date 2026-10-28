@@ -9,7 +9,7 @@ const { crearAviso, crearAvisos } = require("../lib/avisos");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
-const { inicioDeDia, inicioDeHoy } = require("../lib/fechasLocales");
+const { inicioDeDia, finDeDia, inicioDeHoy, diaLocal } = require("../lib/fechasLocales");
 
 router.use(authMiddleware, coordinacionMiddleware);
 
@@ -241,20 +241,33 @@ router.post("/leads/asignar", async (req, res) => {
   }
 });
 
-// GET /api/coordinador/progreso?fecha=YYYY-MM-DD
+// GET /api/coordinador/progreso?fecha=  |  ?desde=&hasta=
+//
+// Un dia, una semana o un rango. `fecha` se conserva porque es lo que
+// pedia la pantalla antes; `desde`/`hasta` es lo general y un solo dia es
+// el caso de desde == hasta.
 router.get("/progreso", async (req, res) => {
   try {
-    // El dia que se pide ("2026-10-26") es un dia del calendario de quien
-    // lo escribe, no un instante UTC: sin esto, el progreso del dia perdia
-    // todo lo ocurrido despues de las 18:00.
-    const inicio = req.query.fecha ? inicioDeDia(req.query.fecha) : inicioDeHoy();
-    const fin = new Date(inicio.getTime() + 86400000);
+    // Las fechas que llegan ("2026-10-26") son dias del calendario de quien
+    // las escribe, no instantes UTC: sin esto el corte perdia todo lo
+    // ocurrido despues de las 18:00 (ver src/lib/fechasLocales.js).
+    const { fecha, desde, hasta } = req.query;
+    const inicio = desde ? inicioDeDia(desde) : fecha ? inicioDeDia(fecha) : inicioDeHoy();
+    const fin = hasta
+      ? finDeDia(hasta)
+      : desde
+        ? finDeDia(desde)
+        : new Date(inicio.getTime() + 86400000);
+
+    if (!inicio || !fin || fin < inicio) {
+      return res.status(400).json({ error: "Rango de fechas invalido" });
+    }
 
     const tenantId = req.user.tenantId;
 
     const [leads, vendedoras] = await Promise.all([
       prisma.lead.findMany({
-        where: { tenantId, createdAt: { gte: inicio, lt: fin } },
+        where: { tenantId, createdAt: { gte: inicio, lte: fin } },
         orderBy: { createdAt: "desc" },
         include: {
           vendedor: { select: { id: true, nombre: true } },
@@ -332,14 +345,31 @@ router.get("/progreso", async (req, res) => {
       }
     }
 
+    // Corte dia por dia. Con un solo dia no aporta nada y se omite; con una
+    // semana o un rango es justo la pregunta ("¿que dia se cayo?").
+    const porDia = new Map();
+    for (const lead of leads) {
+      const dia = diaLocal(lead.createdAt);
+      if (!porDia.has(dia)) porDia.set(dia, { dia, total: 0, concretados: 0, descartados: 0, monto: 0 });
+      const d = porDia.get(dia);
+      d.total += 1;
+      if (lead.status === "VENTA") { d.concretados += 1; d.monto += lead.venta?.monto ?? 0; }
+      else if (lead.status === "DESCARTADO") d.descartados += 1;
+    }
+    const serie = Array.from(porDia.values()).sort((a, b) => a.dia.localeCompare(b.dia));
+
     const equipo = Object.values(porVendedora)
       .map((v) => ({ ...v, conversion: v.asignados > 0 ? Math.round((v.concretados / v.asignados) * 100) : 0 }))
       .sort((a, b) => b.concretados - a.concretados || b.asignados - a.asignados);
 
     res.json({
       fecha: inicio,
+      desde: inicio,
+      hasta: fin,
+      dias: serie.length,
       total: leads.length,
       resumen,
+      serie,
       equipo,
       leads: leads.map((l) => ({
         ...l,
