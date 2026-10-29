@@ -75,6 +75,104 @@ router.get("/campos", async (req, res) => {
   }
 });
 
+// GET /api/admin/incoming-leads/por-buyer?desde=...&hasta=...
+//
+// Que tal se porta cada comprador que manda leads. El buyerId lo pone el
+// proveedor en el payload (ver routes/external.js); aqui solo se agrupa por
+// el y se mira en que termino cada lead.
+//
+// Los leads que llegaron sin buyerId se reportan juntos en una fila aparte
+// en vez de omitirse: si el proveedor todavia no manda el campo, esa fila
+// es el reporte entero, y esconderla haria parecer que no llego nada.
+router.get("/por-buyer", async (req, res) => {
+  try {
+    const fechas = rangoFechas(req.query.desde, req.query.hasta);
+
+    const filas = await prisma.incomingLead.findMany({
+      where: { tenantId: req.user.tenantId, ...(fechas ? { createdAt: fechas } : {}) },
+      select: {
+        buyerId: true,
+        status: true,
+        createdAt: true,
+        apiKey: { select: { label: true } },
+        assignedLead: {
+          select: { status: true, venta: { select: { monto: true } } },
+        },
+      },
+    });
+
+    const porBuyer = new Map();
+
+    for (const fila of filas) {
+      // null y "" son lo mismo aqui: un lead que llego sin identificar.
+      const clave = fila.buyerId || "";
+      if (!porBuyer.has(clave)) {
+        porBuyer.set(clave, {
+          buyerId: fila.buyerId || null,
+          enviados: 0,
+          asignados: 0,
+          noAsignados: 0,
+          vendidos: 0,
+          descartados: 0,
+          pendientes: 0,
+          monto: 0,
+          // De que API keys vino. Un mismo comprador puede entrar por mas de
+          // una si el proveedor rota credenciales.
+          origenes: new Set(),
+          primero: fila.createdAt,
+          ultimo: fila.createdAt,
+        });
+      }
+
+      const b = porBuyer.get(clave);
+      b.enviados += 1;
+      if (fila.apiKey?.label) b.origenes.add(fila.apiKey.label);
+      if (fila.createdAt < b.primero) b.primero = fila.createdAt;
+      if (fila.createdAt > b.ultimo) b.ultimo = fila.createdAt;
+
+      // "No asignado" es del lado de la ingesta (nunca entro a la
+      // operacion); lo demas depende de en que termino el lead.
+      if (fila.status === "FAILED" || !fila.assignedLead) {
+        if (fila.status === "FAILED") b.noAsignados += 1;
+        else b.pendientes += 1;
+        continue;
+      }
+
+      b.asignados += 1;
+      const estado = fila.assignedLead.status;
+      if (estado === "VENTA") {
+        b.vendidos += 1;
+        b.monto += fila.assignedLead.venta?.monto ?? 0;
+      } else if (estado === "DESCARTADO") {
+        b.descartados += 1;
+      } else {
+        b.pendientes += 1;
+      }
+    }
+
+    const buyers = [...porBuyer.values()]
+      .map((b) => ({
+        ...b,
+        origenes: [...b.origenes],
+        // Sobre lo enviado, no sobre lo asignado: lo que no se pudo
+        // trabajar tambien dice algo de la calidad de lo que mandaron.
+        conversion: b.enviados > 0 ? Math.round((b.vendidos / b.enviados) * 100) : 0,
+      }))
+      .sort((a, b) => b.vendidos - a.vendidos || b.enviados - a.enviados);
+
+    res.json({
+      total: filas.length,
+      // Lo que permite decirle a la pantalla "todavia no te mandan el
+      // campo" en vez de mostrar un reporte de una sola fila sin explicar.
+      conBuyerId: filas.filter((f) => f.buyerId).length,
+      buyers,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 // GET /api/admin/incoming-leads?q=2671&desde=...&hasta=...
 //
 // `q` busca en TODO el payload, no en un campo concreto: cuando un proveedor
