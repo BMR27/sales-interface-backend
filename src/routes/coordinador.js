@@ -11,6 +11,33 @@ const router = express.Router();
 const prisma = require("../lib/prisma");
 const { inicioDeDia, finDeDia, inicioDeHoy, diaLocal } = require("../lib/fechasLocales");
 const { filtroDisponible } = require("../lib/protocoloLeads");
+const { LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
+
+// Lo que de verdad esta esperando que alguien lo reparta: sin vendedora,
+// todavia vivo y con la espera del protocolo ya cumplida. Es la misma
+// condicion que arma la cola; existe como funcion para que el contador no
+// pueda volver a separarse de la lista que acompaña.
+function dondeRepartible(tenantId) {
+  return {
+    tenantId,
+    vendedorId: null,
+    status: { in: LEAD_STATUSES_ABIERTOS },
+    ...filtroDisponible(),
+  };
+}
+
+// Sin vendedora y vivo, pero todavia en la espera del protocolo: no se
+// puede repartir aun. Se cuenta aparte en vez de sumarlo al anterior --
+// meterlos juntos es lo que hacia que el tablero prometiera 46 leads y la
+// cola mostrara uno.
+function dondeEnEspera(tenantId) {
+  return {
+    tenantId,
+    vendedorId: null,
+    status: { in: LEAD_STATUSES_ABIERTOS },
+    disponibleDesde: { gt: new Date() },
+  };
+}
 
 router.use(authMiddleware, coordinacionMiddleware);
 
@@ -38,7 +65,7 @@ router.get("/overview", async (req, res) => {
     // Hora de la operacion, no del servidor en UTC (fechasLocales.js).
     const inicioDia = inicioDeHoy();
 
-    const [vendedores, grouped, ventasHoy] = await Promise.all([
+    const [vendedores, grouped, ventasHoy, repartibles, enEspera] = await Promise.all([
       prisma.user.findMany({ where: { rol: "VENDEDOR", tenantId }, select: { id: true, nombre: true } }),
       prisma.lead.groupBy({ by: ["vendedorId", "status"], where: { tenantId }, _count: true }),
       prisma.venta.groupBy({
@@ -46,6 +73,11 @@ router.get("/overview", async (req, res) => {
         where: { tenantId, fecha: { gte: inicioDia } },
         _sum: { monto: true, comision: true },
       }),
+      // Los dos conteos de la cola salen de las mismas condiciones que la
+      // lista de Leads, no del groupBy: ese agrupa por status y no sabe
+      // nada de la espera del protocolo.
+      prisma.lead.count({ where: dondeRepartible(tenantId) }),
+      prisma.lead.count({ where: dondeEnEspera(tenantId) }),
     ]);
 
     const porVendedor = {};
@@ -65,7 +97,19 @@ router.get("/overview", async (req, res) => {
       }
     }
 
-    const totales = { asignados: 0, sinAsignar: 0, pendientes: 0, concretadas: 0, rechazadas: 0, reagendadas: 0 };
+    const totales = {
+      asignados: 0,
+      // Lo que se puede repartir ahora mismo, que es lo que la coordinadora
+      // va a encontrar al entrar a Leads. Antes era "todo lo que no tiene
+      // vendedora", cerrados y en espera incluidos: el tablero prometia 46
+      // leads y la cola mostraba uno.
+      sinAsignar: repartibles,
+      enEspera,
+      pendientes: 0,
+      concretadas: 0,
+      rechazadas: 0,
+      reagendadas: 0,
+    };
 
     for (const row of grouped) {
       const bucket = porVendedor[row.vendedorId];
@@ -73,10 +117,9 @@ router.get("/overview", async (req, res) => {
       const field = key === "pendiente" ? "pendientes" : key === "concretada" ? "concretadas" : key === "rechazada" ? "rechazadas" : "reagendadas";
       // Un lead sin vendedora no esta asignado a nadie: contarlo en
       // "asignados" inflaba el tablero con la propia cola por repartir.
-      if (row.vendedorId == null) {
-        totales.sinAsignar += row._count;
-        continue;
-      }
+      // Cuantos son exactamente se cuenta aparte (`repartibles`): aqui
+      // entrarian tambien los cerrados y los que aun estan en espera.
+      if (row.vendedorId == null) continue;
       totales.asignados += row._count;
       totales[field] += row._count;
       if (bucket) {
@@ -154,7 +197,7 @@ router.get("/leads", async (req, res) => {
     }
     if (filtros.length > 0) where.AND = filtros;
 
-    const [leads, sinAsignar] = await Promise.all([
+    const [leads, sinAsignar, enEspera] = await Promise.all([
       prisma.lead.findMany({
         where,
         // Los que no tienen vendedora van arriba: son los que esperan.
@@ -162,10 +205,11 @@ router.get("/leads", async (req, res) => {
         take: 100,
         include: { vendedor: { select: { id: true, nombre: true } } },
       }),
-      prisma.lead.count({ where: { tenantId: req.user.tenantId, vendedorId: null } }),
+      prisma.lead.count({ where: dondeRepartible(req.user.tenantId) }),
+      prisma.lead.count({ where: dondeEnEspera(req.user.tenantId) }),
     ]);
 
-    res.json({ leads, sinAsignar });
+    res.json({ leads, sinAsignar, enEspera });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

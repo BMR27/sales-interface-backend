@@ -19,6 +19,47 @@ router.get("/mis-permisos", authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/configuracion/marca — la marca del espacio al que pertenece quien
+// pregunta, para cualquier usuario autenticado.
+//
+// La marca se venia resolviendo por hostname, asi que quien entraba por el
+// dominio compartido veia la de la plataforma aunque su cuenta perteneciera
+// a una empresa: una coordinadora de Perfect Self leia "BeyondGoals" en su
+// propio menu. El equivalente de admin (/api/admin/branding) no sirve aqui:
+// exige rol ADMIN y a ella le contestaba 403.
+//
+// Solo lectura y solo del tenant propio: cambiar la marca sigue siendo cosa
+// del ADMIN.
+router.get("/marca", authMiddleware, async (req, res) => {
+  try {
+    if (!req.user.tenantId) return res.json({ tenant: null });
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: req.user.tenantId },
+      select: {
+        nombreComercial: true,
+        razonSocial: true,
+        logoUrl: true,
+        colorPrimario: true,
+        colorSecundario: true,
+      },
+    });
+    if (!tenant) return res.json({ tenant: null });
+
+    res.json({
+      tenant: {
+        nombre: tenant.nombreComercial || tenant.razonSocial,
+        logoUrl: tenant.logoUrl,
+        colorPrimario: tenant.colorPrimario,
+        colorSecundario: tenant.colorSecundario,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 // GET /api/configuracion/parametros — solo lectura, para cualquier usuario
 // autenticado: el panel de llamada necesita el costo de envío y la comisión
 // vigentes, pero sólo el ADMIN puede cambiarlos.
