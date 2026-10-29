@@ -9,6 +9,7 @@ const {
 const {
   inicioDeHoy, inicioDeSemana, inicioDeMes, inicioDeAno, diaLocal,
 } = require("../lib/fechasLocales");
+const { dondeRepartible, dondeEnEspera } = require("../lib/colaLeads");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -52,7 +53,7 @@ router.get("/", async (req, res) => {
       ventasPeriodo, ventasPeriodoAnterior,
       leadsPeriodo, leadsPeriodoAnterior,
       leadsPorStatus, leadsPorSource,
-      sinAsignar, leadsHoyApi,
+      sinAsignar, enEspera, leadsHoyApi,
       ventasDetalle, leadsDetalle,
       llamadasPeriodo,
       itemsVendidos,
@@ -75,7 +76,12 @@ router.get("/", async (req, res) => {
       prisma.lead.groupBy({ by: ["status"], where: { tenantId }, _count: true }),
       prisma.lead.groupBy({ by: ["source"], where: { tenantId, createdAt: { gte: desde } }, _count: true }),
 
-      prisma.lead.count({ where: { tenantId, vendedorId: null } }),
+      // "Sin asignar" es lo que se puede repartir ahora, no todo lo que no
+      // tiene dueña: contar a secas sumaba los cerrados y los que siguen en
+      // la espera del protocolo, y el tablero prometia una cola que la
+      // coordinadora no encontraba (ver src/lib/colaLeads.js).
+      prisma.lead.count({ where: dondeRepartible(tenantId) }),
+      prisma.lead.count({ where: dondeEnEspera(tenantId) }),
       prisma.lead.count({ where: { tenantId, source: "EXTERNAL_API", createdAt: { gte: inicioDia } } }),
 
       // Para las series por día: se traen las filas crudas y se agrupan en
@@ -173,6 +179,7 @@ router.get("/", async (req, res) => {
         porStatus: LEAD_STATUSES.map((s) => ({ status: s, label: LEAD_STATUS_LABELS[s], total: statusMap[s] || 0 })),
         porSource: leadsPorSource.map((s) => ({ source: s.source, total: s._count })),
         sinAsignar,
+        enEspera,
         hoyApi: leadsHoyApi,
       },
 

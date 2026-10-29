@@ -11,33 +11,7 @@ const router = express.Router();
 const prisma = require("../lib/prisma");
 const { inicioDeDia, finDeDia, inicioDeHoy, diaLocal } = require("../lib/fechasLocales");
 const { filtroDisponible } = require("../lib/protocoloLeads");
-const { LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
-
-// Lo que de verdad esta esperando que alguien lo reparta: sin vendedora,
-// todavia vivo y con la espera del protocolo ya cumplida. Es la misma
-// condicion que arma la cola; existe como funcion para que el contador no
-// pueda volver a separarse de la lista que acompaña.
-function dondeRepartible(tenantId) {
-  return {
-    tenantId,
-    vendedorId: null,
-    status: { in: LEAD_STATUSES_ABIERTOS },
-    ...filtroDisponible(),
-  };
-}
-
-// Sin vendedora y vivo, pero todavia en la espera del protocolo: no se
-// puede repartir aun. Se cuenta aparte en vez de sumarlo al anterior --
-// meterlos juntos es lo que hacia que el tablero prometiera 46 leads y la
-// cola mostrara uno.
-function dondeEnEspera(tenantId) {
-  return {
-    tenantId,
-    vendedorId: null,
-    status: { in: LEAD_STATUSES_ABIERTOS },
-    disponibleDesde: { gt: new Date() },
-  };
-}
+const { dondeRepartible, dondeEnEspera } = require("../lib/colaLeads");
 
 router.use(authMiddleware, coordinacionMiddleware);
 
@@ -172,6 +146,13 @@ router.get("/leads", async (req, res) => {
     // Un lead ya repartido se consulta y se reasigna desde "asignados".
     if (asignacion === "asignados") {
       where.vendedorId = { not: null };
+    } else if (asignacion === "espera") {
+      // Los que rebotaron y siguen cumpliendo su espera. Se pueden mirar --
+      // y reasignar a mano si la coordinadora decide que vale la pena --
+      // pero no salen en la cola normal para que el protocolo se respete
+      // solo. Esconderlos del todo era peor: parecian haberse perdido.
+      where.vendedorId = null;
+      where.disponibleDesde = { gt: new Date() };
     } else if (asignacion !== "todos") {
       where.vendedorId = null;
       // Un lead que acaba de rebotar por no contestar sigue en la cola
