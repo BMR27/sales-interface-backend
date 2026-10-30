@@ -13,12 +13,8 @@ const { ocultarTelefonoLead } = require("../lib/telefono");
 // El intento queda registrado a nombre de quien marca (Llamada.vendedorId
 // es una relacion a User, no solo a vendedoras), asi que el historial del
 // lead dice la verdad: llamo la coordinadora.
-function filtroLead(user, leadId) {
-  if (user.rol === "COORDINADOR") {
-    return { id: leadId, tenantId: user.tenantId };
-  }
-  return { id: leadId, vendedorId: user.id };
-}
+
+const { filtroLead } = require("../lib/accesoLead");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");

@@ -11,6 +11,8 @@ const { registrarResultado, historialDeLead } = require("../lib/historialLlamada
 const { ocultarTelefonoLead, ocultarTelefonoLeads, ocultaTelefono } = require("../lib/telefono");
 const { detallarMovimiento } = require("../lib/auditoria");
 
+const { filtroLead } = require("../lib/accesoLead");
+
 const router = express.Router();
 const prisma = require("../lib/prisma");
 
@@ -77,7 +79,7 @@ router.get("/motivos-descarte", authMiddleware, (req, res) => {
 router.get("/:id", authMiddleware, async (req, res) => {
   try {
     const lead = await prisma.lead.findFirst({
-      where: { id: parseInt(req.params.id), vendedorId: req.user.id },
+      where: filtroLead(req.user, parseInt(req.params.id)),
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
     res.json(await ocultarTelefonoLead(lead, req.user));
@@ -124,7 +126,7 @@ router.post("/", authMiddleware, async (req, res) => {
 router.put("/:id", authMiddleware, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
+    const existing = await prisma.lead.findFirst({ where: filtroLead(req.user, id) });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
 
     const {
@@ -237,7 +239,7 @@ router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"),
       return res.status(400).json({ error: "Motivo de descarte invalido" });
     }
     const nota = typeof req.body?.nota === "string" ? req.body.nota.trim().slice(0, 300) : null;
-    const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
+    const existing = await prisma.lead.findFirst({ where: filtroLead(req.user, id) });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
     if (existing.status === "VENTA") {
       return res.status(409).json({ error: "Este lead ya tiene una venta cerrada" });
@@ -295,7 +297,7 @@ router.post("/:id/supervision", authMiddleware, async (req, res) => {
       return res.status(400).json({ error: "Fecha de re-llamada invalida" });
     }
 
-    const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
+    const existing = await prisma.lead.findFirst({ where: filtroLead(req.user, id) });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
     if (!LEAD_STATUSES_ABIERTOS.includes(existing.status)) {
       return res.status(409).json({
@@ -350,7 +352,7 @@ router.post("/:id/devolver", authMiddleware, requirePermiso("vendedor.leads.devo
     const id = parseInt(req.params.id);
     const motivo = typeof req.body?.motivo === "string" ? req.body.motivo.trim().slice(0, 300) : "";
 
-    const existing = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
+    const existing = await prisma.lead.findFirst({ where: filtroLead(req.user, id) });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
 
     // Solo se devuelve lo que sigue vivo: una venta cerrada o un descarte ya
@@ -415,7 +417,7 @@ router.post("/:id/ticket-sms", authMiddleware, async (req, res) => {
 
     const id = parseInt(req.params.id);
     const lead = await prisma.lead.findFirst({
-      where: { id, vendedorId: req.user.id },
+      where: filtroLead(req.user, id),
       include: { venta: true },
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
@@ -442,7 +444,7 @@ router.post("/:id/solicitar-ubicacion", authMiddleware, async (req, res) => {
     if (!process.env.FRONTEND_URL) return res.status(503).json({ error: "FRONTEND_URL no configurado" });
 
     const id = parseInt(req.params.id);
-    const lead = await prisma.lead.findFirst({ where: { id, vendedorId: req.user.id } });
+    const lead = await prisma.lead.findFirst({ where: filtroLead(req.user, id) });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
     if (!lead.telefono) return res.status(400).json({ error: "El lead no tiene teléfono" });
 

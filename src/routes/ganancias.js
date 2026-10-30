@@ -2,6 +2,7 @@ const express = require("express");
 const authMiddleware = require("../middleware/auth");
 const { syncVentaToFullVector } = require("../lib/fullvector");
 const { calcularQuincenaVendedora, recalcularQuincena } = require("../lib/comisiones");
+const { filtroLead } = require("../lib/accesoLead");
 const { getParametros } = require("../lib/parametros");
 const { crearAviso } = require("../lib/avisos");
 
@@ -82,8 +83,16 @@ router.post("/venta", authMiddleware, async (req, res) => {
       return res.status(400).json({ error: "leadId y monto requeridos" });
     }
 
-    const lead = await prisma.lead.findFirst({ where: { id: leadId, vendedorId: req.user.id } });
+    const lead = await prisma.lead.findFirst({ where: filtroLead(req.user, leadId) });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
+
+    // A quien se le acredita la venta.
+    //
+    // Si el lead ya tiene vendedora, es suya aunque la cierre la
+    // coordinadora: ella acompaña la llamada, no se queda con la venta. Si
+    // no tiene dueña -- un lead de la cola que la coordinadora trabajo ella
+    // misma -- se le acredita a quien la cerro, que es quien la hizo.
+    const vendedorDeLaVenta = lead.vendedorId ?? req.user.id;
 
     const ventaExistente = await prisma.venta.findUnique({ where: { leadId } });
     if (ventaExistente) {
@@ -96,7 +105,7 @@ router.post("/venta", authMiddleware, async (req, res) => {
     // acepta del cliente -- la entrega la confirma FullVector.
     let venta = await prisma.venta.create({
       data: {
-        leadId, vendedorId: req.user.id, monto, comision: 0,
+        leadId, vendedorId: vendedorDeLaVenta, monto, comision: 0,
         costoEnvio: Number(costoEnvio) || 0,
         folio: folio || null,
         tenantId: req.user.tenantId,
@@ -111,7 +120,13 @@ router.post("/venta", authMiddleware, async (req, res) => {
 
     await prisma.lead.update({
       where: { id: leadId },
-      data: { status: "VENTA", monto, folio: finalFolio },
+      data: {
+        status: "VENTA", monto, folio: finalFolio,
+        // Un lead vendido no puede quedarse sin dueña: si se cerro desde la
+        // cola, queda a nombre de quien lo trabajo. Si no, se respeta la
+        // vendedora que ya tenia.
+        ...(lead.vendedorId ? {} : { vendedorId: vendedorDeLaVenta, asignadoAt: new Date() }),
+      },
     });
 
     const leadItems = await prisma.leadItem.findMany({ where: { leadId } });
@@ -162,7 +177,9 @@ router.post("/venta", authMiddleware, async (req, res) => {
 
     // La pieza recien vendida puede completar un bloque de dias anteriores:
     // se recalcula la quincena completa de la vendedora.
-    await recalcularQuincena(req.user.tenantId, req.user.id, venta.fecha).catch((err) => {
+    // Se recalcula la de quien cobra la venta, que no siempre es quien la
+    // registro: la coordinadora puede cerrarla por la vendedora.
+    await recalcularQuincena(req.user.tenantId, vendedorDeLaVenta, venta.fecha).catch((err) => {
       console.error("no se pudo recalcular la comision de la quincena", err);
     });
 
