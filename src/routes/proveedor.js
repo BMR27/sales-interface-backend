@@ -28,36 +28,16 @@ router.get("/api-key", async (req, res) => {
   }
 });
 
-// POST /api/proveedor/api-key — genera (o regenera, revocando la anterior) la key propia del proveedor
+// POST /api/proveedor/api-key — cerrado a proposito.
+//
+// Regenerar revoca la key anterior de inmediato y rompe la integracion en
+// marcha. Esa decision es del administrador del espacio, que es quien
+// puede avisar y coordinar el cambio; el proveedor la pide y el admin la
+// genera desde Equipo (POST /api/admin/vendedores/:id/api-key).
 router.post("/api-key", async (req, res) => {
-  try {
-    await prisma.apiKey.updateMany({
-      where: { createdByUserId: req.user.id, tenantId: req.user.tenantId, active: true },
-      data: { active: false },
-    });
-
-    const fullKey = `sk_${crypto.randomBytes(24).toString("hex")}`;
-    const apiKey = await prisma.apiKey.create({
-      data: {
-        label: `Proveedor de leads - ${req.user.nombre}`,
-        keyPrefix: fullKey.slice(0, 12),
-        keyHash: hashKey(fullKey),
-        tenantId: req.user.tenantId,
-        createdByUserId: req.user.id,
-      },
-    });
-
-    res.status(201).json({
-      id: apiKey.id,
-      label: apiKey.label,
-      keyPrefix: apiKey.keyPrefix,
-      key: fullKey,
-      createdAt: apiKey.createdAt,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error del servidor" });
-  }
+  res.status(403).json({
+    error: "Pídele a tu administrador que genere una API key nueva",
+  });
 });
 
 // Rango por defecto del portal: el mes corrido. Suficiente para ver como va

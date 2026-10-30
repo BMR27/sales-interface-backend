@@ -19,6 +19,8 @@ const { crearAvisos } = require("../lib/avisos");
 const { getParametros } = require("../lib/parametros");
 const { detallarMovimiento } = require("../lib/auditoria");
 const { ROLES_PRESTABLES_A_ADMIN, construirVistaPrestada } = require("../lib/impersonacion");
+const crypto = require("crypto");
+const { hashKey } = require("../middleware/apiKey");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -579,6 +581,64 @@ router.post("/proveedores/invitacion", adminMiddleware, async (req, res) => {
     const base = process.env.FRONTEND_URL || "";
     const link = `${base}/registro-proveedor?token=${token}`;
     res.status(201).json({ token, link, expiresIn: "7 días" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/admin/vendedores/:id/api-key — genera (o regenera) la API key
+// de un proveedor de leads del espacio.
+//
+// Vive aqui y no en el portal del proveedor porque regenerar revoca la key
+// anterior al instante: la integracion del proveedor deja de funcionar sin
+// aviso. Quien puede coordinar ese cambio es el administrador.
+//
+// La key completa se devuelve UNA sola vez, aqui. De la base no se puede
+// recuperar: se guarda hasheada (keyHash), que es lo que impide que un
+// volcado de la tabla sirva para mandar leads en nombre del proveedor.
+router.post("/vendedores/:id/api-key", adminMiddleware, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const proveedor = await prisma.user.findFirst({
+      where: { id, tenantId: req.user.tenantId, rol: "PROVEEDOR_LEADS" },
+      select: { id: true, nombre: true, activo: true },
+    });
+    if (!proveedor) return res.status(404).json({ error: "Proveedor no encontrado en tu espacio" });
+    if (!proveedor.activo) {
+      return res.status(400).json({ error: "El proveedor está inactivo: actívalo antes de darle una key" });
+    }
+
+    await prisma.apiKey.updateMany({
+      where: { createdByUserId: proveedor.id, tenantId: req.user.tenantId, active: true },
+      data: { active: false },
+    });
+
+    const fullKey = `sk_${crypto.randomBytes(24).toString("hex")}`;
+    const apiKey = await prisma.apiKey.create({
+      data: {
+        label: `Proveedor de leads - ${proveedor.nombre}`,
+        keyPrefix: fullKey.slice(0, 12),
+        keyHash: hashKey(fullKey),
+        tenantId: req.user.tenantId,
+        // La key sigue colgando del proveedor, no del admin: es lo que hace
+        // que sus leads y su portal la reconozcan como suya.
+        createdByUserId: proveedor.id,
+      },
+    });
+
+    detallarMovimiento(req, {
+      entidadId: proveedor.id,
+      descripcion: `Generó una API key nueva para ${proveedor.nombre}`,
+    });
+
+    res.status(201).json({
+      id: apiKey.id,
+      label: apiKey.label,
+      keyPrefix: apiKey.keyPrefix,
+      key: fullKey,
+      createdAt: apiKey.createdAt,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
