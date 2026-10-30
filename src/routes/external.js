@@ -8,6 +8,7 @@ const { crearAviso } = require("../lib/avisos");
 const { detallarMovimiento } = require("../lib/auditoria");
 const { aplicarResultadoEntrega, marcarCoberturaDeLead } = require("../lib/fullvector");
 const { recalcularQuincena } = require("../lib/comisiones");
+const { comentariosDeLead, puedeVerNotas, INCLUDE_COMENTARIOS } = require("../lib/reporteProveedor");
 const {
   LEAD_STATUSES,
   LEAD_STATUS_LABELS,
@@ -304,6 +305,56 @@ router.get("/leads/:folio", apiKeyMiddleware, async (req, res) => {
     if (!incomingLead) return res.status(404).json({ error: "Folio no encontrado" });
 
     res.json(serializeEstado(incomingLead));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/external/leads/:folio/comentarios — que se registró al trabajar
+// ese lead: cada intento de llamada, si el cliente contestó, y en qué
+// terminó. Es lo que permite al proveedor validar un lead que se le está
+// descontando ("dicen que el número no existe, ¿cuántas veces marcaron?").
+//
+// Las notas de texto libre van sólo si el ADMIN del espacio lo autoriza
+// (parámetro compartirNotasConProveedor); el historial estructurado y el
+// motivo de descarte van siempre, porque son los que permiten auditar.
+router.get("/leads/:folio/comentarios", apiKeyMiddleware, async (req, res) => {
+  try {
+    const incomingLead = await prisma.incomingLead.findFirst({
+      where: { apiKeyId: req.apiKey.id, folio: req.params.folio },
+      orderBy: { createdAt: "desc" },
+      select: {
+        folio: true,
+        assignedLead: {
+          select: {
+            folio: true,
+            folioPS: true,
+            status: true,
+            motivoDescarte: true,
+            motivoDescarteNota: true,
+            devueltoAt: true,
+            devueltoMotivo: true,
+            ...INCLUDE_COMENTARIOS,
+          },
+        },
+      },
+    });
+    if (!incomingLead) return res.status(404).json({ error: "Folio no encontrado" });
+
+    if (!incomingLead.assignedLead) {
+      return res.json({
+        folio: incomingLead.folio,
+        estado: "pendiente",
+        detalleEstado: "Recibido, aún sin asignar",
+        intentos: [],
+        totalIntentos: 0,
+        vecesQueContesto: 0,
+      });
+    }
+
+    const incluirNotas = await puedeVerNotas(req.apiKey.tenantId);
+    res.json(comentariosDeLead(incomingLead.assignedLead, { incluirNotas }));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

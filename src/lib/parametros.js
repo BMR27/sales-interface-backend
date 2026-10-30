@@ -79,6 +79,20 @@ const DEFINICION = {
       "Cuando el cliente no contesta, el lead vuelve a la fila pero no se reparte hasta que pase este tiempo. Puede tomarlo otra vendedora y otro dia.",
     grupo: "Calidad de leads",
   },
+  // Las notas de llamada son texto libre que la vendedora escribe mientras
+  // habla. Son justo lo que el proveedor pide para discutir un descarte
+  // ("dicen que el numero no existe, ¿que paso?"), pero tambien pueden
+  // traer cualquier cosa que se haya escrito ahi. Apagado, el proveedor
+  // sigue recibiendo el historial de intentos y el motivo de descarte --
+  // lo que permite auditar -- pero no el texto suelto.
+  compartirNotasConProveedor: {
+    tipo: "boolean",
+    default: true,
+    label: "Compartir notas de llamada con el proveedor",
+    ayuda:
+      "Encendido, el proveedor ve las notas que la vendedora escribio en cada llamada, ademas del historial de intentos y el motivo de descarte. Apagado, solo ve el historial y el motivo.",
+    grupo: "Calidad de leads",
+  },
   reintentoAutomatico: {
     tipo: "boolean",
     default: true,
