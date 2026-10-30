@@ -21,6 +21,7 @@ const { detallarMovimiento } = require("../lib/auditoria");
 const { ROLES_PRESTABLES_A_ADMIN, construirVistaPrestada } = require("../lib/impersonacion");
 const crypto = require("crypto");
 const { hashKey } = require("../middleware/apiKey");
+const { revocarSesiones } = require("../lib/sesiones");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -581,6 +582,57 @@ router.post("/proveedores/invitacion", adminMiddleware, async (req, res) => {
     const base = process.env.FRONTEND_URL || "";
     const link = `${base}/registro-proveedor?token=${token}`;
     res.status(201).json({ token, link, expiresIn: "7 días" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// PUT /api/admin/vendedores/:id/password — establece una contraseña nueva
+// para alguien del espacio.
+//
+// No habia forma de recuperar una contraseña: no existe "olvide mi
+// contraseña" y se guardan con bcrypt, que es de ida sola. Quien la perdia
+// quedaba fuera del sistema sin remedio -- y con proveedores externos
+// entrando al portal, eso dejo de ser un caso raro.
+//
+// Otro ADMIN queda fuera, igual que en "Ver como": cambiarle la contraseña
+// a un par es tomar su cuenta, y no hay razon de operacion que lo pida.
+router.put("/vendedores/:id/password", adminMiddleware, async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    if (!password || String(password).length < 8) {
+      return res.status(400).json({ error: "La contraseña debe tener al menos 8 caracteres" });
+    }
+
+    const usuario = await prisma.user.findFirst({
+      where: { id: Number(req.params.id), tenantId: req.user.tenantId },
+      select: { id: true, nombre: true, rol: true },
+    });
+    if (!usuario) return res.status(404).json({ error: "Usuario no encontrado en tu espacio" });
+    if (usuario.id === req.user.id) {
+      return res.status(400).json({ error: "Tu propia contraseña se cambia desde Mi Perfil" });
+    }
+    if (usuario.rol === "ADMIN" || usuario.rol === "SUPER_ADMIN") {
+      return res.status(403).json({ error: "No puedes cambiar la contraseña de otro administrador" });
+    }
+
+    await prisma.user.update({
+      where: { id: usuario.id },
+      data: { password: await bcrypt.hash(String(password), 10) },
+    });
+
+    // Si alguien tenia esa cuenta abierta, la contraseña nueva no deberia
+    // dejarlo seguir dentro: es justo el caso de "creo que alguien mas la
+    // tiene". Vuelve a pedir login con la credencial nueva.
+    await revocarSesiones(usuario.id, { motivo: "cerrada_por_usuario" });
+
+    detallarMovimiento(req, {
+      entidadId: usuario.id,
+      descripcion: `Restableció la contraseña de ${usuario.nombre}`,
+    });
+
+    res.json({ ok: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
