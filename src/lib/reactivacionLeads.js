@@ -21,15 +21,32 @@ const MOTIVOS_REACTIVABLES = ["NO_CONTESTO", "LO_PENSARA", "PRECIO"];
 //
 // `antesDe` acota por antiguedad del descarte: reactivar algo que se
 // descarto esta mañana es volver a llamar al mismo cliente el mismo dia.
-function dondeReactivable(tenantId, { motivos, desde, hasta, antesDe } = {}) {
+function dondeReactivable(tenantId, { motivos, desde, hasta, antesDe, busqueda } = {}) {
   const elegidos = (motivos?.length ? motivos : MOTIVOS_REACTIVABLES)
     .filter((m) => MOTIVOS_REACTIVABLES.includes(m));
 
   const where = {
     tenantId,
     status: "DESCARTADO",
-    motivoDescarte: { in: elegidos.length ? elegidos : MOTIVOS_REACTIVABLES },
   };
+
+  // Buscar un lead concreto -- por telefono, folio o nombre -- no filtra
+  // por motivo: ahi el admin esta corrigiendo un descarte que sabe que
+  // estuvo mal, viendo ese lead y su motivo en pantalla. La lista cerrada
+  // de motivos existe para la reactivacion masiva, donde nadie mira uno
+  // por uno.
+  const aguja = typeof busqueda === "string" ? busqueda.trim() : "";
+  if (aguja) {
+    const soloDigitos = aguja.replace(/\D/g, "");
+    where.OR = [
+      ...(soloDigitos.length >= 4 ? [{ telefono: { contains: soloDigitos } }] : []),
+      { folioPS: { contains: aguja, mode: "insensitive" } },
+      { folio: { contains: aguja, mode: "insensitive" } },
+      { nombre: { contains: aguja, mode: "insensitive" } },
+    ];
+  } else {
+    where.motivoDescarte = { in: elegidos.length ? elegidos : MOTIVOS_REACTIVABLES };
+  }
 
   const rango = {};
   if (desde) rango.gte = desde;

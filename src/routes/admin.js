@@ -598,11 +598,12 @@ router.post("/proveedores/invitacion", adminMiddleware, async (req, res) => {
 // desglose por motivo antes de confirmarlo.
 router.get("/leads/reactivables", adminMiddleware, async (req, res) => {
   try {
-    const { motivos, desde, hasta } = req.query;
+    const { motivos, desde, hasta, q } = req.query;
     const where = dondeReactivable(req.user.tenantId, {
       motivos: motivos ? String(motivos).split(",") : undefined,
       desde: desde ? inicioDeDia(desde) : undefined,
       hasta: hasta ? finDeDia(hasta) : undefined,
+      busqueda: q,
     });
 
     const porMotivo = await prisma.lead.groupBy({
@@ -610,6 +611,21 @@ router.get("/leads/reactivables", adminMiddleware, async (req, res) => {
       where,
       _count: true,
     });
+
+    // Buscando un lead concreto se devuelve la lista, no solo el conteo:
+    // el admin tiene que ver cual es y por que se descarto antes de
+    // devolverlo a la cola.
+    const leads = q
+      ? await prisma.lead.findMany({
+          where,
+          select: {
+            id: true, folioPS: true, nombre: true, telefono: true,
+            motivoDescarte: true, descartadoAt: true,
+          },
+          orderBy: { descartadoAt: "desc" },
+          take: 50,
+        })
+      : [];
 
     res.json({
       total: porMotivo.reduce((s, m) => s + m._count, 0),
@@ -619,6 +635,10 @@ router.get("/leads/reactivables", adminMiddleware, async (req, res) => {
         total: m._count,
       })),
       motivosPermitidos: MOTIVOS_REACTIVABLES.map((m) => ({ motivo: m, label: motivoLabel(m) })),
+      leads: leads.map((l) => ({
+        ...l,
+        motivoLabel: motivoLabel(l.motivoDescarte),
+      })),
     });
   } catch (err) {
     console.error(err);
@@ -629,12 +649,19 @@ router.get("/leads/reactivables", adminMiddleware, async (req, res) => {
 // POST /api/admin/leads/reactivar — los devuelve a la cola.
 router.post("/leads/reactivar", adminMiddleware, async (req, res) => {
   try {
-    const { motivos, desde, hasta } = req.body || {};
-    const where = dondeReactivable(req.user.tenantId, {
-      motivos: Array.isArray(motivos) ? motivos : undefined,
-      desde: desde ? inicioDeDia(desde) : undefined,
-      hasta: hasta ? finDeDia(hasta) : undefined,
-    });
+    const { motivos, desde, hasta, ids } = req.body || {};
+
+    // Con ids explicitos se reactivan esos y nada mas: es el caso de
+    // "este lead se descarto por error", donde el admin ya vio cual es.
+    // El tenantId sigue en el where, asi que no se puede reactivar un lead
+    // de otra empresa mandando su id.
+    const where = Array.isArray(ids) && ids.length > 0
+      ? { tenantId: req.user.tenantId, status: "DESCARTADO", id: { in: ids.map(Number).filter(Number.isFinite) } }
+      : dondeReactivable(req.user.tenantId, {
+          motivos: Array.isArray(motivos) ? motivos : undefined,
+          desde: desde ? inicioDeDia(desde) : undefined,
+          hasta: hasta ? finDeDia(hasta) : undefined,
+        });
 
     const leads = await prisma.lead.findMany({ where, select: { id: true } });
     if (leads.length === 0) {
