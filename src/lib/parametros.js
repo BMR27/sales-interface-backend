@@ -79,6 +79,37 @@ const DEFINICION = {
       "Cuando el cliente no contesta, el lead vuelve a la fila pero no se reparte hasta que pase este tiempo. Puede tomarlo otra vendedora y otro dia.",
     grupo: "Calidad de leads",
   },
+  // Nace apagado a proposito: devolver descartados a la cola cambia la
+  // carga de trabajo del equipo y el porcentaje de calidad de la base.
+  // Encenderlo es una decision de la empresa, no un default.
+  reactivarDescartadosAuto: {
+    tipo: "boolean",
+    default: false,
+    label: "Reactivar descartados automaticamente",
+    ayuda:
+      "Encendido, los leads descartados por 'No contesto', 'Lo pensara' o 'Por el precio' vuelven solos a la cola cuando pasa el plazo de abajo. Nunca vuelven los que dicen que el numero no sirve o que el cliente no quiere que lo llamen.",
+    grupo: "Calidad de leads",
+  },
+  reactivarDescartadosDias: {
+    default: 15,
+    min: 1,
+    max: 365,
+    label: "Dias antes de reactivar un descartado",
+    sufijo: "dias",
+    ayuda:
+      "Cuanto tiene que haber pasado desde el descarte para que el lead vuelva a la cola. Muy corto es volver a llamar al mismo cliente la misma semana.",
+    grupo: "Calidad de leads",
+  },
+  reactivarDescartadosMaxDiarios: {
+    default: 50,
+    min: 1,
+    max: 1000,
+    label: "Maximo de descartados a reactivar por dia",
+    sufijo: "leads",
+    ayuda:
+      "El tope que puede entrar cada dia. Evita que al encender la regla por primera vez caigan miles de leads viejos de golpe sobre la cola.",
+    grupo: "Calidad de leads",
+  },
   // Las notas de llamada son texto libre que la vendedora escribe mientras
   // habla. Son justo lo que el proveedor pide para discutir un descarte
   // ("dicen que el numero no existe, ¿que paso?"), pero tambien pueden

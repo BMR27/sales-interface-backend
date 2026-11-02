@@ -51,6 +51,7 @@ const estadisticasRoutes = require("./routes/estadisticas");
 const { startFullvectorRetryJob } = require("./jobs/fullvectorRetry");
 const { startEntregasSyncJob } = require("./jobs/entregasSync");
 const { startPurgaGrabacionesJob } = require("./jobs/purgaGrabaciones");
+const { startReactivarDescartadosJob } = require("./jobs/reactivarDescartados");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -176,4 +177,5 @@ app.listen(PORT, () => {
   startEntregasSyncJob();
   startMonitoringJob();
   startPurgaGrabacionesJob();
+  startReactivarDescartadosJob();
 });

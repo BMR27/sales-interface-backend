@@ -244,6 +244,13 @@ model Lead {
   // las que no caben en un catalogo.
   solicitudEspecial String?
 
+  // Desde cuando cuentan los intentos de este lead. La pone la
+  // reactivacion de un descartado: sin ella, un lead que se descarto por
+  // "no contesto" (3 intentos) vuelve a la cola y el protocolo lo descarta
+  // otra vez en la primera llamada, porque sigue contando las 13 viejas.
+  // Null = cuentan todas, que es el caso normal.
+  reintentosDesde   DateTime?
+
   motivoDescarte    String?
   motivoDescarteNota String?
   descartadoAt      DateTime?

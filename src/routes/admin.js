@@ -13,7 +13,7 @@ const ROLES_ASIGNABLES = ["ADMIN", "ADMIN_OPERATIVO", "VENDEDOR", "COORDINADOR"]
 const { getNextVendedor } = require("../lib/assignment");
 const { parseWorkbookBuffer, validateRow, buildTemplateBuffer } = require("../lib/leadsImport");
 const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
-const { inicioDeHoy, inicioDeSemana, inicioDeMes } = require("../lib/fechasLocales");
+const { inicioDeHoy, inicioDeSemana, inicioDeMes, inicioDeDia, finDeDia } = require("../lib/fechasLocales");
 const { notificarLeadsImportados } = require("../lib/notificaciones");
 const { crearAvisos } = require("../lib/avisos");
 const { getParametros } = require("../lib/parametros");
@@ -22,6 +22,8 @@ const { ROLES_PRESTABLES_A_ADMIN, construirVistaPrestada } = require("../lib/imp
 const crypto = require("crypto");
 const { hashKey } = require("../middleware/apiKey");
 const { revocarSesiones } = require("../lib/sesiones");
+const { MOTIVOS_REACTIVABLES, dondeReactivable, reactivar } = require("../lib/reactivacionLeads");
+const { motivoLabel } = require("../lib/motivosDescarte");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -582,6 +584,77 @@ router.post("/proveedores/invitacion", adminMiddleware, async (req, res) => {
     const base = process.env.FRONTEND_URL || "";
     const link = `${base}/registro-proveedor?token=${token}`;
     res.status(201).json({ token, link, expiresIn: "7 días" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/admin/leads/reactivables — cuantos descartados volverian a la
+// cola con el filtro dado, antes de tocar nada.
+//
+// La vista previa no es un adorno: devolver leads a la cola es masivo y no
+// tiene deshacer, asi que el admin tiene que poder ver el numero y el
+// desglose por motivo antes de confirmarlo.
+router.get("/leads/reactivables", adminMiddleware, async (req, res) => {
+  try {
+    const { motivos, desde, hasta } = req.query;
+    const where = dondeReactivable(req.user.tenantId, {
+      motivos: motivos ? String(motivos).split(",") : undefined,
+      desde: desde ? inicioDeDia(desde) : undefined,
+      hasta: hasta ? finDeDia(hasta) : undefined,
+    });
+
+    const porMotivo = await prisma.lead.groupBy({
+      by: ["motivoDescarte"],
+      where,
+      _count: true,
+    });
+
+    res.json({
+      total: porMotivo.reduce((s, m) => s + m._count, 0),
+      porMotivo: porMotivo.map((m) => ({
+        motivo: m.motivoDescarte,
+        label: motivoLabel(m.motivoDescarte),
+        total: m._count,
+      })),
+      motivosPermitidos: MOTIVOS_REACTIVABLES.map((m) => ({ motivo: m, label: motivoLabel(m) })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/admin/leads/reactivar — los devuelve a la cola.
+router.post("/leads/reactivar", adminMiddleware, async (req, res) => {
+  try {
+    const { motivos, desde, hasta } = req.body || {};
+    const where = dondeReactivable(req.user.tenantId, {
+      motivos: Array.isArray(motivos) ? motivos : undefined,
+      desde: desde ? inicioDeDia(desde) : undefined,
+      hasta: hasta ? finDeDia(hasta) : undefined,
+    });
+
+    const leads = await prisma.lead.findMany({ where, select: { id: true } });
+    if (leads.length === 0) {
+      return res.json({ reactivados: 0, message: "Ningun lead coincide con ese filtro" });
+    }
+
+    const reactivados = await reactivar({
+      tenantId: req.user.tenantId,
+      ids: leads.map((l) => l.id),
+      motivo: "Reactivado por el administrador para volver a llamar",
+      porNombre: req.user.nombre,
+    });
+
+    detallarMovimiento(req, {
+      entidadId: null,
+      descripcion: `Devolvió ${reactivados} leads descartados a la cola`,
+      despues: { motivos: motivos ?? MOTIVOS_REACTIVABLES, desde: desde ?? null, hasta: hasta ?? null },
+    });
+
+    res.json({ reactivados, message: `${reactivados} leads volvieron a la cola` });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

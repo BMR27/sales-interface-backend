@@ -28,14 +28,19 @@ async function aplicarProtocoloNoContesto({ leadId, tenantId }) {
 
     const lead = await prisma.lead.findFirst({
       where: { id: leadId, tenantId },
-      select: { id: true, status: true, vendedorId: true },
+      select: { id: true, status: true, vendedorId: true, reintentosDesde: true },
     });
     // Un lead ya cerrado -- vendido o descartado -- no es trabajo de nadie.
     if (!lead || !LEAD_STATUSES_ABIERTOS.includes(lead.status)) return null;
 
+    // Un lead reactivado empieza de cero. Si siguieramos contando sus
+    // llamadas viejas, el primer intento ya superaria el umbral y el
+    // protocolo lo descartaria otra vez: reactivarlo no serviria de nada.
+    const desde = lead.reintentosDesde ? { fecha: { gte: lead.reintentosDesde } } : {};
+
     const [intentos, contestadas] = await Promise.all([
-      prisma.llamada.count({ where: { leadId, tenantId } }),
-      prisma.llamada.count({ where: { leadId, tenantId, contestada: true } }),
+      prisma.llamada.count({ where: { leadId, tenantId, ...desde } }),
+      prisma.llamada.count({ where: { leadId, tenantId, contestada: true, ...desde } }),
     ]);
 
     // Si alguna vez contesto, el numero servia y la conversacion existio:
