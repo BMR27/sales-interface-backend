@@ -25,16 +25,23 @@ const { LEAD_STATUSES_ABIERTOS } = require("./leadStatus");
 
 // Desde cuando aplica el descarte automatico por agotar el plazo.
 //
-// El protocolo entro en vigor con los leads del 3 de noviembre de 2026 en
+// El protocolo entro en vigor con los leads del 1 de noviembre de 2026 en
 // adelante. Sin esta linea, al encenderlo todos los leads viejos -- que
 // llevan semanas en la cola -- superarian las 72 horas de golpe y el
 // sistema los descartaria en masa el dia del despliegue: una limpieza que
 // nadie pidio y que no se puede deshacer lead por lead.
 //
+// Por que el 1 y no una fecha anterior: un lead no se cierra por su edad
+// sino porque su PRIMERA llamada tiene mas de 72 horas, y esa llamada
+// nunca es anterior a su creacion. Con el corte en el 1 de noviembre, el
+// lead mas viejo que entra no puede vencer antes del 4: no hay cierre
+// masivo posible el dia del despliegue, solo vencimientos escalonados
+// como en la operacion normal.
+//
 // Los leads anteriores siguen trabajandose a mano como hasta ahora; lo que
 // no hace el sistema es cerrarlos solo. Las esperas entre intentos si
 // aplican a todos: esas no destruyen nada.
-const PROTOCOLO_DESDE = new Date("2026-11-03T00:00:00-06:00");
+const PROTOCOLO_DESDE = new Date("2026-11-01T00:00:00-06:00");
 
 // Un lead entra al cierre automatico solo si nacio despues del corte.
 function entraAlProtocolo(lead) {
