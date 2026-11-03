@@ -12,6 +12,7 @@ const { ocultarTelefonoLead, ocultarTelefonoLeads, ocultaTelefono } = require(".
 const { detallarMovimiento } = require("../lib/auditoria");
 
 const { filtroLead } = require("../lib/accesoLead");
+const { emitir } = require("../lib/eventos");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -274,6 +275,7 @@ router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"),
       despues: { status: "DESCARTADO" },
     });
 
+    emitir(req.user.tenantId, "lead.descartado", { leadId: id });
     res.json({ message: "Lead descartado" });
   } catch (err) {
     console.error(err);
@@ -337,6 +339,7 @@ router.post("/:id/supervision", authMiddleware, async (req, res) => {
       despues: lead,
     });
 
+    emitir(req.user.tenantId, "lead.supervision", { leadId: id });
     res.json({ ok: true, lead: await ocultarTelefonoLead(lead, req.user) });
   } catch (err) {
     console.error(err);
@@ -401,6 +404,7 @@ router.post("/:id/devolver", authMiddleware, requirePermiso("vendedor.leads.devo
       despues: { vendedor: "sin asignar", motivo: lead.devueltoMotivo },
     });
 
+    emitir(req.user.tenantId, "lead.devuelto", { leadId: id });
     res.json({ message: "Lead devuelto a la cola de asignación", leadId: id });
   } catch (err) {
     console.error(err);

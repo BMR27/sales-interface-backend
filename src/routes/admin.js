@@ -24,6 +24,7 @@ const { hashKey } = require("../middleware/apiKey");
 const { revocarSesiones } = require("../lib/sesiones");
 const { MOTIVOS_REACTIVABLES, dondeReactivable, reactivar } = require("../lib/reactivacionLeads");
 const { motivoLabel } = require("../lib/motivosDescarte");
+const { emitir } = require("../lib/eventos");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -343,6 +344,7 @@ router.put("/leads/:id/reassign", async (req, res) => {
       include: { vendedor: { select: { id: true, nombre: true } } },
     });
 
+    emitir(req.user.tenantId, "lead.reasignado", { leadId: lead.id });
     res.json(lead);
   } catch (err) {
     console.error(err);
@@ -681,6 +683,7 @@ router.post("/leads/reactivar", adminMiddleware, async (req, res) => {
       despues: { motivos: motivos ?? MOTIVOS_REACTIVABLES, desde: desde ?? null, hasta: hasta ?? null },
     });
 
+    emitir(req.user.tenantId, "leads.reactivados", { total: reactivados });
     res.json({ reactivados, message: `${reactivados} leads volvieron a la cola` });
   } catch (err) {
     console.error(err);

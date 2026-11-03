@@ -3,6 +3,7 @@ const authMiddleware = require("../middleware/auth");
 const { syncVentaToFullVector } = require("../lib/fullvector");
 const { calcularQuincenaVendedora, recalcularQuincena } = require("../lib/comisiones");
 const { filtroLead } = require("../lib/accesoLead");
+const { emitir } = require("../lib/eventos");
 const { getParametros } = require("../lib/parametros");
 const { crearAviso } = require("../lib/avisos");
 
@@ -182,6 +183,8 @@ router.post("/venta", authMiddleware, async (req, res) => {
     await recalcularQuincena(req.user.tenantId, vendedorDeLaVenta, venta.fecha).catch((err) => {
       console.error("no se pudo recalcular la comision de la quincena", err);
     });
+
+    emitir(req.user.tenantId, "venta.cerrada", { leadId, monto });
 
     syncVentaToFullVector(venta.id).catch((err) => {
       console.error("fullvector sync error, venta", venta.id, err);

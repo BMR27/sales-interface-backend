@@ -48,6 +48,7 @@ const grabacionesRoutes = require("./routes/grabaciones");
 const incomingLeadsRoutes = require("./routes/incomingLeads");
 const parametrosRoutes = require("./routes/parametros");
 const estadisticasRoutes = require("./routes/estadisticas");
+const eventosRoutes = require("./routes/eventos");
 const { startFullvectorRetryJob } = require("./jobs/fullvectorRetry");
 const { startEntregasSyncJob } = require("./jobs/entregasSync");
 const { startPurgaGrabacionesJob } = require("./jobs/purgaGrabaciones");
@@ -164,6 +165,7 @@ app.use("/api/proveedor", proveedorRoutes);
 app.use("/api/coordinador", coordinadorRoutes);
 app.use("/api/prepago", prepagoRoutes);
 app.use("/api/voice", voiceRoutes);
+app.use("/api/eventos", eventosRoutes);
 app.use("/api/public", publicRoutes);
 
 app.use((err, req, res, next) => {

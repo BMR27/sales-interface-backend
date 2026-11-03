@@ -9,6 +9,7 @@ const { detallarMovimiento } = require("../lib/auditoria");
 const { aplicarResultadoEntrega, marcarCoberturaDeLead } = require("../lib/fullvector");
 const { recalcularQuincena } = require("../lib/comisiones");
 const { comentariosDeLead, puedeVerNotas, INCLUDE_COMENTARIOS } = require("../lib/reporteProveedor");
+const { emitir } = require("../lib/eventos");
 const {
   LEAD_STATUSES,
   LEAD_STATUS_LABELS,
@@ -195,6 +196,8 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
         enlace: "/leads",
       });
     }
+
+    emitir(tenantId, "lead.recibido", { leadId: lead.id, asignado: !!vendedor });
 
     res.status(201).json({
       received: true,

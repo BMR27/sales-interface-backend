@@ -12,6 +12,7 @@ const prisma = require("../lib/prisma");
 const { inicioDeDia, finDeDia, inicioDeHoy, diaLocal } = require("../lib/fechasLocales");
 const { filtroDisponible } = require("../lib/protocoloLeads");
 const { dondeRepartible, dondeEnEspera } = require("../lib/colaLeads");
+const { emitir } = require("../lib/eventos");
 
 router.use(authMiddleware, coordinacionMiddleware);
 
@@ -277,6 +278,7 @@ router.post("/leads/asignar", async (req, res) => {
       where: { tenantId: req.user.tenantId, vendedorId: null },
     });
 
+    emitir(req.user.tenantId, "leads.asignados", { total: result.count, vendedor: vendedor.nombre });
     res.json({ message: "Leads asignados", actualizados: result.count, sinAsignar });
   } catch (err) {
     console.error(err);
