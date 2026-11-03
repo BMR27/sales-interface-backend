@@ -53,6 +53,7 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
   const leadIdCrudo = Number(req.body.leadId);
 
   let grabar = false;
+  let motivoFallo = null;
 
   try {
     const vendedor = vendedorId
@@ -80,6 +81,24 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
 
       // Solo se marca a un lead al que de verdad se le puede llamar.
       if (lead) to = lead.telefono;
+
+      // Si no se encontro, hay que saber por que: "vuelve a intentarlo" es
+      // un mal consejo cuando el lead dejo de ser suyo, porque reintentar
+      // da exactamente el mismo resultado. El caso tipico es el protocolo:
+      // tras una llamada sin respuesta el lead vuelve a la cola, y la
+      // vendedora que no recargo la pantalla sigue viendo el boton.
+      if (!lead && Number.isInteger(leadIdCrudo)) {
+        const ajeno = await prisma.lead.findFirst({
+          where: { id: leadIdCrudo, tenantId: vendedor.tenantId },
+          select: { vendedorId: true, status: true },
+        });
+        if (!ajeno) motivoFallo = "inexistente";
+        else if (ajeno.status === "DESCARTADO") motivoFallo = "descartado";
+        else if (ajeno.vendedorId === null) motivoFallo = "en_cola";
+        else motivoFallo = "reasignado";
+      } else if (lead && !lead.telefono) {
+        motivoFallo = "sin_telefono";
+      }
 
       // El intento queda registrado SIEMPRE, se grabe o no: el historial de
       // "cuántas veces se le ha llamado" no puede depender de un parámetro
@@ -124,9 +143,30 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
   // navegador y esto no podía pasar; ahora hay que decirlo en vez de marcar
   // a un número vacío, que Twilio intentaría igual.
   if (!to) {
-    console.error("no se pudo resolver a quién marcar", { callSid, from: req.body.From });
+    console.error("no se pudo resolver a quién marcar", {
+      callSid,
+      from: req.body.From,
+      motivo: motivoFallo ?? "desconocido",
+    });
+
+    const AVISOS = {
+      // El mas comun con diferencia: el protocolo lo devolvio a la cola
+      // tras una llamada sin respuesta.
+      en_cola:
+        "Este lead volvió a la cola y ya no está asignado. Actualiza tu lista: el coordinador lo repartirá de nuevo.",
+      reasignado:
+        "Este lead ahora lo atiende otra persona. Actualiza tu lista para ver los que te corresponden.",
+      descartado:
+        "Este lead ya fue descartado. Actualiza tu lista.",
+      sin_telefono:
+        "Este lead no tiene un número de teléfono registrado. Avisa a tu coordinador.",
+      inexistente:
+        "No se encontró este lead. Actualiza tu lista e inténtalo de nuevo.",
+    };
+    const texto = AVISOS[motivoFallo] ?? "No se pudo iniciar la llamada. Actualiza tu lista e inténtalo de nuevo.";
+
     return res.send(
-      '<Response><Say language="es-MX" voice="Polly.Mia">No se pudo iniciar la llamada. Vuelve a intentarlo desde el panel.</Say></Response>',
+      `<Response><Say language="es-MX" voice="Polly.Mia">${texto}</Say></Response>`,
     );
   }
 

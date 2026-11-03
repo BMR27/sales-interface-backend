@@ -22,6 +22,7 @@
 const prisma = require("./prisma");
 const { getParametros } = require("./parametros");
 const { LEAD_STATUSES_ABIERTOS } = require("./leadStatus");
+const { emitir } = require("./eventos");
 
 // Desde cuando aplica el descarte automatico por agotar el plazo.
 //
@@ -133,6 +134,7 @@ async function aplicarProtocoloNoContesto({ leadId, tenantId, desenlaceTwilio })
 
     if (ahora >= vencePlazo && entraAlProtocolo(lead)) {
       await descartarPorPlazo(lead.id, desenlace);
+      emitir(tenantId, "lead.descartado", { leadId, motivo: desenlace.motivoTrash });
       return { accion: "descartado", desenlace: desenlace.clave, motivo: desenlace.motivoTrash };
     }
 
@@ -158,6 +160,17 @@ async function aplicarProtocoloNoContesto({ leadId, tenantId, desenlaceTwilio })
         devueltoMotivo: etiquetaDeEspera(desenlace, esperaMin),
         devueltoPorNombre: "Protocolo automatico",
       },
+    });
+
+    // La vendedora que acaba de marcar tiene la pantalla abierta con este
+    // lead y un boton de llamar que ya no va a funcionar: el lead dejo de
+    // ser suyo en este mismo instante. El aviso hace que su lista se
+    // actualice sola en vez de dejarla descubrirlo al siguiente intento.
+    emitir(tenantId, "lead.devuelto", {
+      leadId,
+      vendedorId: lead.vendedorId,
+      motivo: desenlace.clave,
+      disponibleDesde,
     });
 
     return {
