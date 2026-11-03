@@ -60,6 +60,13 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
       ? await prisma.user.findUnique({ where: { id: vendedorId }, select: { id: true, tenantId: true, rol: true } })
       : null;
 
+    // Si no hay vendedora resoluble, nada de lo de abajo corre y el fallo
+    // se quedaba sin diagnosticar: salia como "desconocido" aunque la
+    // causa fuera clara.
+    if (!vendedor) motivoFallo = "sin_vendedor";
+    else if (!vendedor.tenantId) motivoFallo = "vendedor_sin_espacio";
+    else if (!callSid) motivoFallo = "sin_call_sid";
+
     if (vendedor?.tenantId && callSid) {
       const params = await getParametros(vendedor.tenantId);
       grabar = params.grabacionLlamadas;
@@ -87,7 +94,11 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
       // da exactamente el mismo resultado. El caso tipico es el protocolo:
       // tras una llamada sin respuesta el lead vuelve a la cola, y la
       // vendedora que no recargo la pantalla sigue viendo el boton.
-      if (!lead && Number.isInteger(leadIdCrudo)) {
+      if (!Number.isInteger(leadIdCrudo)) {
+        // El parametro no llego o no es un numero. No es culpa de los
+        // permisos del lead: es que el navegador no lo mando.
+        motivoFallo = "sin_lead_id";
+      } else if (!lead) {
         const ajeno = await prisma.lead.findFirst({
           where: { id: leadIdCrudo, tenantId: vendedor.tenantId },
           select: { vendedorId: true, status: true },
@@ -147,6 +158,13 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
       callSid,
       from: req.body.From,
       motivo: motivoFallo ?? "desconocido",
+      // El valor crudo, tal como llego: sin esto no se puede distinguir
+      // "el navegador no mando el lead" de "el lead ya no es suyo", que
+      // son dos fallos distintos con arreglos distintos.
+      leadIdRecibido: req.body.leadId ?? null,
+      vendedorId: vendedorId ?? null,
+      // Que parametros llegaron, para ver si el SDK los esta perdiendo.
+      parametros: Object.keys(req.body).join(","),
     });
 
     const AVISOS = {
@@ -162,6 +180,12 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
         "Este lead no tiene un número de teléfono registrado. Avisa a tu coordinador.",
       inexistente:
         "No se encontró este lead. Actualiza tu lista e inténtalo de nuevo.",
+      sin_lead_id:
+        "No se pudo identificar el lead. Vuelve a abrirlo desde tu lista e inténtalo de nuevo.",
+      sin_vendedor:
+        "No se pudo identificar tu usuario. Cierra sesión y vuelve a entrar.",
+      vendedor_sin_espacio:
+        "Tu usuario no tiene una empresa asignada. Avisa a tu administrador.",
     };
     const texto = AVISOS[motivoFallo] ?? "No se pudo iniciar la llamada. Actualiza tu lista e inténtalo de nuevo.";
 
