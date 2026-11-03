@@ -24,6 +24,8 @@ const { hashKey } = require("../middleware/apiKey");
 const { revocarSesiones } = require("../lib/sesiones");
 const { MOTIVOS_REACTIVABLES, dondeReactivable, reactivar } = require("../lib/reactivacionLeads");
 const { motivoLabel } = require("../lib/motivosDescarte");
+const { describirLeads } = require("../lib/semaforoLead");
+const { cronologiaDeLead } = require("../lib/cronologiaLead");
 const { emitir } = require("../lib/eventos");
 
 const router = express.Router();
@@ -300,7 +302,14 @@ router.get("/leads", async (req, res) => {
       prisma.lead.findMany({
         where,
         orderBy: { updatedAt: "desc" },
-        include: { vendedor: { select: { id: true, nombre: true, email: true } } },
+        include: {
+          vendedor: { select: { id: true, nombre: true, email: true } },
+          // El administrador necesita el mismo semaforo y los mismos
+          // relojes que la coordinadora: un lead bloqueado o a punto de
+          // caducar se ve igual mire quien lo mire.
+          _count: { select: { llamadas: true } },
+          llamadas: { orderBy: { fecha: "desc" }, take: 1, select: { fecha: true, desenlace: true, contestada: true } },
+        },
       }),
       prisma.lead.groupBy({ by: ["status"], where: whereSinStatus, _count: true }),
       prisma.lead.count({ where: { ...whereSinStatus, vendedorId: null } }),
@@ -309,8 +318,20 @@ router.get("/leads", async (req, res) => {
     const conteos = Object.fromEntries(LEAD_STATUSES.map((s) => [s, 0]));
     for (const fila of porStatus) conteos[fila.status] = fila._count;
 
-    res.json({
+    const descripciones = await describirLeads(
       leads,
+      req.user.tenantId,
+      new Map(leads.map((l) => [l.id, {
+        intentos: l._count.llamadas,
+        ultimaLlamada: l.llamadas[0] ?? null,
+      }]))
+    );
+
+    res.json({
+      leads: leads.map((l, i) => {
+        const { _count, llamadas, ...lead } = l;
+        return { ...lead, ...descripciones[i] };
+      }),
       conteos: {
         ...conteos,
         total: Object.values(conteos).reduce((a, b) => a + b, 0),
@@ -586,6 +607,18 @@ router.post("/proveedores/invitacion", adminMiddleware, async (req, res) => {
     const base = process.env.FRONTEND_URL || "";
     const link = `${base}/registro-proveedor?token=${token}`;
     res.status(201).json({ token, link, expiresIn: "7 días" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/admin/leads/:id/cronologia — la historia completa de un lead.
+router.get("/leads/:id/cronologia", async (req, res) => {
+  try {
+    const cronologia = await cronologiaDeLead(parseInt(req.params.id), req.user.tenantId);
+    if (!cronologia) return res.status(404).json({ error: "Lead no encontrado" });
+    res.json(cronologia);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

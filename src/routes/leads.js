@@ -13,6 +13,8 @@ const { detallarMovimiento } = require("../lib/auditoria");
 
 const { filtroLead } = require("../lib/accesoLead");
 const { getParametros } = require("../lib/parametros");
+const { cronologiaDeLead } = require("../lib/cronologiaLead");
+const { describirLeads } = require("../lib/semaforoLead");
 const { emitir } = require("../lib/eventos");
 
 const router = express.Router();
@@ -42,6 +44,12 @@ router.get("/", authMiddleware, async (req, res) => {
     const leads = await prisma.lead.findMany({
       where,
       orderBy: { updatedAt: "desc" },
+      include: {
+        // La vendedora ve el mismo semaforo que su coordinadora: cuales no
+        // ha tocado, cuales ya trabajo y cuanto le queda a cada uno.
+        _count: { select: { llamadas: true } },
+        llamadas: { orderBy: { fecha: "desc" }, take: 1, select: { fecha: true, desenlace: true, contestada: true } },
+      },
     });
 
     const counts = await prisma.lead.groupBy({
@@ -58,10 +66,47 @@ router.get("/", authMiddleware, async (req, res) => {
     res.json({
       // La vendedora ve los ultimos 4 digitos si el parametro
       // ocultarTelefonoVendedor esta encendido (ver src/lib/telefono.js).
-      leads: await ocultarTelefonoLeads(leads, req.user),
+      leads: await (async () => {
+        const descripciones = await describirLeads(
+          leads,
+          req.user.tenantId,
+          new Map(leads.map((l) => [l.id, {
+            intentos: l._count.llamadas,
+            ultimaLlamada: l.llamadas[0] ?? null,
+          }]))
+        );
+        const limpios = leads.map((l, i) => {
+          const { _count, llamadas, ...lead } = l;
+          return { ...lead, ...descripciones[i] };
+        });
+        return ocultarTelefonoLeads(limpios, req.user);
+      })(),
       counts: counts.reduce((acc, c) => ({ ...acc, [c.status]: c._count }), {}),
       totalVentas: totalMonto._sum.monto || 0,
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/leads/:id/cronologia — todo lo que le ha pasado a un lead.
+//
+// Va antes de GET /:id por el orden de declaracion de Express. El filtro
+// de acceso es el de siempre: la vendedora ve los suyos, la coordinadora
+// cualquiera de su espacio. El administrador entra por su propia ruta.
+router.get("/:id/cronologia", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const permitido = await prisma.lead.findFirst({
+      where: filtroLead(req.user, id),
+      select: { id: true },
+    });
+    if (!permitido) return res.status(404).json({ error: "Lead no encontrado" });
+
+    const cronologia = await cronologiaDeLead(id, req.user.tenantId);
+    if (!cronologia) return res.status(404).json({ error: "Lead no encontrado" });
+    res.json(cronologia);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

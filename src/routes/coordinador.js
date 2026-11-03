@@ -12,6 +12,7 @@ const prisma = require("../lib/prisma");
 const { inicioDeDia, finDeDia, inicioDeHoy, diaLocal } = require("../lib/fechasLocales");
 const { filtroDisponible } = require("../lib/protocoloLeads");
 const { dondeRepartible, dondeEnEspera } = require("../lib/colaLeads");
+const { describirLeads } = require("../lib/semaforoLead");
 const { emitir } = require("../lib/eventos");
 
 router.use(authMiddleware, coordinacionMiddleware);
@@ -190,35 +191,34 @@ router.get("/leads", async (req, res) => {
           // La que atendió la llamada donde se pidió la reagenda: el
           // protocolo pide devolvérsela a ella con prioridad.
           reagendaVendedorSugerido: { select: { id: true, nombre: true } },
-          // Cuantas veces se le ha marcado: es lo que separa un lead
-          // totalmente nuevo de uno que ya rebotó y volvió a la cola.
+          // Cuantas veces se le ha marcado y cuando fue la ultima: es lo
+          // que separa un lead intacto de uno que ya rebotó, y lo que deja
+          // ver el ritmo del seguimiento sin abrir el historial.
           _count: { select: { llamadas: true } },
+          llamadas: { orderBy: { fecha: "desc" }, take: 1, select: { fecha: true, desenlace: true, contestada: true } },
         },
       }),
       prisma.lead.count({ where: dondeRepartible(req.user.tenantId) }),
       prisma.lead.count({ where: dondeEnEspera(req.user.tenantId) }),
     ]);
 
-    const ahora = new Date();
+    // El semaforo y los relojes salen de src/lib/semaforoLead.js, que es
+    // el mismo que usan la pantalla del admin y la de la vendedora: si
+    // cada una lo calculara, el mismo lead se pintaria distinto segun
+    // quien lo mire.
+    const descripciones = await describirLeads(
+      leads,
+      req.user.tenantId,
+      new Map(leads.map((l) => [l.id, {
+        intentos: l._count.llamadas,
+        ultimaLlamada: l.llamadas[0] ?? null,
+      }]))
+    );
+
     res.json({
-      leads: leads.map((l) => {
-        const { _count, ...lead } = l;
-        return {
-          ...lead,
-          intentos: _count.llamadas,
-          // Semáforo de la cola:
-          //   nuevo      nadie le ha marcado nunca
-          //   trabajado  ya tuvo intentos y volvió a la cola
-          //   trash      descartado
-          // El color lo decide el servidor, que es quien tiene las
-          // llamadas: en la pantalla habría que adivinarlo.
-          semaforo:
-            lead.status === "DESCARTADO" ? "trash"
-            : _count.llamadas === 0 ? "nuevo"
-            : "trabajado",
-          // Pasó su ventana de 15 minutos sin que nadie lo repartiera.
-          ventanaVencida: !!lead.disponibleHasta && new Date(lead.disponibleHasta) < ahora,
-        };
+      leads: leads.map((l, i) => {
+        const { _count, llamadas, ...lead } = l;
+        return { ...lead, ...descripciones[i] };
       }),
       sinAsignar,
       enEspera,
