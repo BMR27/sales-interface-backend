@@ -11,7 +11,7 @@
 // dia siguiente dejaria leads muertos ocupando la cola media jornada.
 const prisma = require("../lib/prisma");
 const { getParametros } = require("../lib/parametros");
-const { descartarPorPlazo, DESENLACES } = require("../lib/protocoloLeads");
+const { descartarPorPlazo, DESENLACES, PROTOCOLO_DESDE } = require("../lib/protocoloLeads");
 const { LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
 const { emitir } = require("../lib/eventos");
 
@@ -40,6 +40,10 @@ async function cerrarVencidos() {
       where: {
         tenantId,
         status: { in: LEAD_STATUSES_ABIERTOS },
+        // Solo los leads nacidos desde que el protocolo entro en vigor.
+        // Sin este corte, el primer arranque encontraria semanas de leads
+        // viejos pasados de las 72 horas y los cerraria en masa.
+        createdAt: { gte: PROTOCOLO_DESDE },
         // El plazo corre desde la reactivacion si el lead volvio a la cola;
         // si no, desde su primera llamada.
         OR: [
