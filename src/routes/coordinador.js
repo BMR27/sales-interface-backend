@@ -185,13 +185,41 @@ router.get("/leads", async (req, res) => {
         // Los que no tienen vendedora van arriba: son los que esperan.
         orderBy: [{ vendedorId: { sort: "asc", nulls: "first" } }, { createdAt: "desc" }],
         take: 100,
-        include: { vendedor: { select: { id: true, nombre: true } } },
+        include: {
+          vendedor: { select: { id: true, nombre: true } },
+          // Cuantas veces se le ha marcado: es lo que separa un lead
+          // totalmente nuevo de uno que ya rebotó y volvió a la cola.
+          _count: { select: { llamadas: true } },
+        },
       }),
       prisma.lead.count({ where: dondeRepartible(req.user.tenantId) }),
       prisma.lead.count({ where: dondeEnEspera(req.user.tenantId) }),
     ]);
 
-    res.json({ leads, sinAsignar, enEspera });
+    const ahora = new Date();
+    res.json({
+      leads: leads.map((l) => {
+        const { _count, ...lead } = l;
+        return {
+          ...lead,
+          intentos: _count.llamadas,
+          // Semáforo de la cola:
+          //   nuevo      nadie le ha marcado nunca
+          //   trabajado  ya tuvo intentos y volvió a la cola
+          //   trash      descartado
+          // El color lo decide el servidor, que es quien tiene las
+          // llamadas: en la pantalla habría que adivinarlo.
+          semaforo:
+            lead.status === "DESCARTADO" ? "trash"
+            : _count.llamadas === 0 ? "nuevo"
+            : "trabajado",
+          // Pasó su ventana de 15 minutos sin que nadie lo repartiera.
+          ventanaVencida: !!lead.disponibleHasta && new Date(lead.disponibleHasta) < ahora,
+        };
+      }),
+      sinAsignar,
+      enEspera,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

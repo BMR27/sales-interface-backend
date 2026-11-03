@@ -1,25 +1,76 @@
-// Protocolo de reintento cuando el cliente no contesta.
+// Secuencialidad de una llamada cuando el cliente NO contesta.
 //
-// La regla de negocio: no se descarta un lead porque no contesto una vez.
-// Vuelve a la fila, deja pasar un rato y se le insiste, hasta agotar los
-// intentos. Solo entonces se da por perdido -- y ahi si cuenta como basura
-// de la base, porque el proveedor cobro por un numero que nunca respondio.
+// La regla de negocio (documento "Secuencialidad de una llamada, en
+// sistema"): un lead que no contesta no se descarta, vuelve al queue de la
+// coordinadora con un candado que depende de COMO termino la llamada, y se
+// insiste asi hasta 72 horas contadas desde la PRIMERA llamada. Agotado el
+// plazo, se descarta solo como trash con la justificacion que corresponde.
 //
-// Lo que NO exige el protocolo: que lo retome la misma vendedora ni que
-// sea el mismo dia. Puede tomarlo cualquiera, cuando le toque.
+//   desenlace            candado        trash a las 72h
+//   no contesta/buzon    2:00 - 2:15    "no contesto despues de 72 horas"
+//   rechaza la llamada   3:00 - 3:15    "rechazo las llamadas despues de 72 horas"
+//   fuera de servicio    4:00 - 4:15    "numero fuera de servicio despues de 72 horas"
 //
-// La espera importa. Marcarle tres veces seguidas en cinco minutos no es
-// insistir, es quemar al cliente, y ademas agota el protocolo sin haberle
-// dado una oportunidad real. Por eso el lead vuelve a la cola pero con
-// `disponibleDesde` en el futuro: esta en fila, no disponible todavia.
+// El cuarto de hora de arriba es una ventana, no un vencimiento: pasada
+// esa hora el lead sigue repartible, pero `disponibleHasta` ya vencio y la
+// coordinadora puede verlo como atrasado. Bloquearlo de verdad dejaria
+// leads inalcanzables si nadie entra justo en esos 15 minutos.
+//
+// Lo que sustituye: antes esto se media en intentos (3 intentos, 90
+// minutos fijos entre uno y otro) sin importar como habia terminado la
+// llamada ni cuanto llevaba el lead en la cola.
 const prisma = require("./prisma");
 const { getParametros } = require("./parametros");
 const { LEAD_STATUSES_ABIERTOS } = require("./leadStatus");
 
+// Como termino el intento, en los terminos del protocolo.
+//
+// Twilio no distingue "el cliente colgo" de "el telefono comunicaba": las
+// dos llegan como `busy`. Es lo mas cerca que se puede estar de la
+// clasificacion del documento sin preguntarle a la vendedora.
+const DESENLACES = {
+  NO_CONTESTA: {
+    clave: "NO_CONTESTA",
+    // no-answer: sonaron los rings y nadie contesto. El buzon tambien cae
+    // aqui cuando la llamada se corta sin que nadie descuelgue.
+    twilio: ["no-answer"],
+    esperaParam: "esperaNoContestaMin",
+    motivoTrash: "NO_CONTESTO_72H",
+    justificacion: "Cliente no contestó después de 72 horas en queue",
+  },
+  RECHAZA: {
+    clave: "RECHAZA",
+    // busy: comunicando o rechazo explicito del cliente.
+    twilio: ["busy"],
+    esperaParam: "esperaRechazaMin",
+    motivoTrash: "RECHAZO_72H",
+    justificacion: "Cliente rechazó las llamadas después de 72 horas en queue",
+  },
+  FUERA_DE_SERVICIO: {
+    clave: "FUERA_DE_SERVICIO",
+    // failed/canceled: la red no pudo alcanzar el numero -- temporalmente
+    // fuera de servicio, fuera del area de cobertura.
+    twilio: ["failed", "canceled"],
+    esperaParam: "esperaFueraServicioMin",
+    motivoTrash: "FUERA_SERVICIO_72H",
+    justificacion: "Número de cliente FUERA DE SERVICIO después de 72 horas en queue",
+  },
+};
+
+function clasificarDesenlace(desenlaceTwilio) {
+  for (const d of Object.values(DESENLACES)) {
+    if (d.twilio.includes(desenlaceTwilio)) return d;
+  }
+  // Desconocido o sin dato: se trata como "no contesta", que es el candado
+  // mas corto. Esperar de mas castiga al lead por una falta de informacion
+  // que no es suya.
+  return DESENLACES.NO_CONTESTA;
+}
+
 // Se ejecuta al terminar una llamada que nadie contesto. Nunca lanza: va
 // colgado del webhook de Twilio, y un fallo aqui no puede tumbar el aviso
 // de fin de llamada ni dejar la llamada a medias.
-async function aplicarProtocoloNoContesto({ leadId, tenantId }) {
+async function aplicarProtocoloNoContesto({ leadId, tenantId, desenlaceTwilio }) {
   try {
     if (!leadId || !tenantId) return null;
 
@@ -28,63 +79,101 @@ async function aplicarProtocoloNoContesto({ leadId, tenantId }) {
 
     const lead = await prisma.lead.findFirst({
       where: { id: leadId, tenantId },
-      select: { id: true, status: true, vendedorId: true, reintentosDesde: true },
+      select: {
+        id: true, status: true, vendedorId: true,
+        reintentosDesde: true, primeraLlamadaAt: true,
+      },
     });
     // Un lead ya cerrado -- vendido o descartado -- no es trabajo de nadie.
     if (!lead || !LEAD_STATUSES_ABIERTOS.includes(lead.status)) return null;
 
-    // Un lead reactivado empieza de cero. Si siguieramos contando sus
-    // llamadas viejas, el primer intento ya superaria el umbral y el
-    // protocolo lo descartaria otra vez: reactivarlo no serviria de nada.
-    const desde = lead.reintentosDesde ? { fecha: { gte: lead.reintentosDesde } } : {};
+    // Un lead reactivado empieza de cero: si contaramos desde su primera
+    // llamada historica, ya habria agotado las 72 horas y se descartaria
+    // en el primer intento.
+    const inicioDelPlazo = lead.reintentosDesde ?? lead.primeraLlamadaAt ?? new Date();
 
-    const [intentos, contestadas] = await Promise.all([
-      prisma.llamada.count({ where: { leadId, tenantId, ...desde } }),
-      prisma.llamada.count({ where: { leadId, tenantId, contestada: true, ...desde } }),
-    ]);
-
+    const contestadas = await prisma.llamada.count({
+      where: {
+        leadId, tenantId, contestada: true,
+        ...(lead.reintentosDesde ? { fecha: { gte: lead.reintentosDesde } } : {}),
+      },
+    });
     // Si alguna vez contesto, el numero servia y la conversacion existio:
     // este protocolo no aplica. Lo que siga lo decide quien lo atienda.
     if (contestadas > 0) return null;
 
-    const umbral = params.calidadIntentosNoContesto;
+    const desenlace = clasificarDesenlace(desenlaceTwilio);
+    const ahora = new Date();
+    const vencePlazo = new Date(inicioDelPlazo.getTime() + params.horasParaTrash * 3600000);
 
-    if (intentos >= umbral) {
-      await prisma.lead.update({
-        where: { id: leadId },
-        data: {
-          status: "DESCARTADO",
-          motivoDescarte: "NO_CONTESTO",
-          motivoDescarteNota: `Descarte automatico: ${intentos} intentos sin respuesta`,
-          descartadoAt: new Date(),
-          // Sin `descartadoPorId`: no lo descarto una persona, lo descarto
-          // el protocolo. Atribuirselo a la ultima vendedora que marco
-          // seria culparla de una regla que no decidio.
-          disponibleDesde: null,
-          requiereSupervision: false,
-        },
-      });
-      return { accion: "descartado", intentos, umbral };
+    if (ahora >= vencePlazo) {
+      await descartarPorPlazo(lead.id, desenlace);
+      return { accion: "descartado", desenlace: desenlace.clave, motivo: desenlace.motivoTrash };
     }
 
-    const esperaMs = params.reintentoEsperaMinutos * 60000;
+    const esperaMin = params[desenlace.esperaParam];
+    const disponibleDesde = new Date(ahora.getTime() + esperaMin * 60000);
+    const disponibleHasta = new Date(
+      disponibleDesde.getTime() + params.ventanaReasignacionMin * 60000
+    );
+
     await prisma.lead.update({
       where: { id: leadId },
       data: {
         vendedorId: null,
         asignadoAt: null,
         asignadoPorCoordinador: false,
-        disponibleDesde: new Date(Date.now() + esperaMs),
-        devueltoAt: new Date(),
-        devueltoMotivo: `No contesto (intento ${intentos} de ${umbral})`,
+        disponibleDesde,
+        disponibleHasta,
+        ultimoDesenlace: desenlace.clave,
+        // El reloj de las 72 horas arranca con el primer intento y no se
+        // vuelve a tocar.
+        ...(lead.primeraLlamadaAt ? {} : { primeraLlamadaAt: ahora }),
+        devueltoAt: ahora,
+        devueltoMotivo: etiquetaDeEspera(desenlace, esperaMin),
         devueltoPorNombre: "Protocolo automatico",
       },
     });
-    return { accion: "reencolado", intentos, umbral, esperaMinutos: params.reintentoEsperaMinutos };
+
+    return {
+      accion: "reencolado",
+      desenlace: desenlace.clave,
+      esperaMinutos: esperaMin,
+      disponibleDesde,
+      disponibleHasta,
+      vencePlazo,
+    };
   } catch (err) {
     console.error("no se pudo aplicar el protocolo de no contesto", leadId, err);
     return null;
   }
+}
+
+function etiquetaDeEspera(desenlace, esperaMin) {
+  const horas = Math.round((esperaMin / 60) * 10) / 10;
+  if (desenlace.clave === "RECHAZA") return `Rechazó la llamada, vuelve en ${horas} h`;
+  if (desenlace.clave === "FUERA_DE_SERVICIO") return `Número fuera de servicio, vuelve en ${horas} h`;
+  return `No contestó, vuelve en ${horas} h`;
+}
+
+// El descarte de las 72 horas. Lo usan el protocolo y el tick que barre
+// los leads que agotaron el plazo sin que nadie les volviera a marcar.
+async function descartarPorPlazo(leadId, desenlace) {
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      status: "DESCARTADO",
+      motivoDescarte: desenlace.motivoTrash,
+      motivoDescarteNota: desenlace.justificacion,
+      descartadoAt: new Date(),
+      // Sin `descartadoPorId`: no lo descarto una persona, lo descarto el
+      // protocolo. Atribuirselo a la ultima vendedora que marco seria
+      // culparla de una regla que no decidio.
+      disponibleDesde: null,
+      disponibleHasta: null,
+      requiereSupervision: false,
+    },
+  });
 }
 
 // Filtro de Prisma para "se puede repartir ahora": o nunca estuvo en
@@ -96,4 +185,18 @@ function filtroDisponible() {
   };
 }
 
-module.exports = { aplicarProtocoloNoContesto, filtroDisponible };
+// Los que ya pasaron su ventana de 15 minutos sin que nadie los repartiera.
+// No estan bloqueados -- siguen en la cola -- pero el protocolo pedia
+// avisar, y esto es lo que permite marcarlos en pantalla.
+function filtroVentanaVencida() {
+  return { disponibleHasta: { lt: new Date() } };
+}
+
+module.exports = {
+  aplicarProtocoloNoContesto,
+  filtroDisponible,
+  filtroVentanaVencida,
+  descartarPorPlazo,
+  clasificarDesenlace,
+  DESENLACES,
+};

@@ -26,9 +26,20 @@ const VENTANA_MS = 2 * 60 * 60 * 1000;
 async function registrarIntento({ leadId, vendedorId, tenantId, callSid, estadoAntes }) {
   try {
     if (!leadId || !vendedorId || !tenantId) return null;
-    return await prisma.llamada.create({
+    const intento = await prisma.llamada.create({
       data: { leadId, vendedorId, tenantId, callSid: callSid || null, estadoAntes: estadoAntes || null },
     });
+
+    // El reloj de las 72 horas arranca con la primera llamada, no con la
+    // entrada del lead: un lead que paso dos dias sin que nadie le marcara
+    // no gasto su plazo. updateMany con el filtro en null lo deja idempotente
+    // sin tener que leer antes.
+    await prisma.lead.updateMany({
+      where: { id: leadId, primeraLlamadaAt: null },
+      data: { primeraLlamadaAt: intento.fecha },
+    });
+
+    return intento;
   } catch (err) {
     // P2002: el webhook de Twilio se reintenta; el intento ya estaba escrito.
     if (err?.code !== "P2002") console.error("registrarIntento falló", leadId, err);

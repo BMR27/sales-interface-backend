@@ -3,7 +3,7 @@ const crypto = require("crypto");
 const authMiddleware = require("../middleware/auth");
 const { requirePermiso } = require("../lib/permisosCatalog");
 const { siguienteFolio } = require("../lib/folios");
-const { MOTIVOS, parseMotivo, esTrash } = require("../lib/motivosDescarte");
+const { MOTIVOS_VIGENTES, parseMotivo, esTrash } = require("../lib/motivosDescarte");
 const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
 const { LEAD_STATUSES, LEAD_STATUSES_ABIERTOS, parseLeadStatus } = require("../lib/leadStatus");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
@@ -73,7 +73,7 @@ router.get("/", authMiddleware, async (req, res) => {
 // Va ANTES de GET /:id a proposito: Express casa por orden de declaracion,
 // y declarada despues caeria en el comodin del id.
 router.get("/motivos-descarte", authMiddleware, (req, res) => {
-  res.json({ motivos: MOTIVOS });
+  res.json({ motivos: MOTIVOS_VIGENTES });
 });
 
 // GET /api/leads/:id

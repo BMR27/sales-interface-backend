@@ -231,6 +231,23 @@ model Lead {
   // fecha no se reparte (ver src/lib/protocoloLeads.js).
   disponibleDesde   DateTime?
 
+  // Cierre de la ventana de reasignacion. El protocolo de secuencialidad
+  // pide repartir el lead entre las 2:00 y las 2:15 posteriores al intento
+  // (3:00-3:15 si rechazo, 4:00-4:15 si estaba fuera de servicio): pasado
+  // ese cuarto de hora el lead sigue en la cola pero se avisa, porque
+  // llamar fuera de la ventana ya no respeta el ritmo acordado.
+  disponibleHasta   DateTime?
+
+  // Cuando se le marco por primera vez. Es el reloj de las 72 horas: el
+  // plazo corre desde el primer intento, no desde el ultimo ni desde que
+  // el lead entro.
+  primeraLlamadaAt  DateTime?
+
+  // Como termino el ultimo intento, ya tipificado (NO_CONTESTA, RECHAZA,
+  // FUERA_DE_SERVICIO). Decide cuanto espera el lead antes de volver a
+  // repartirse y con que motivo se descarta al agotar las 72 horas.
+  ultimoDesenlace   String?
+
   // El cliente pidio que le llamaran en otro momento y la vendedora no
   // puede atenderlo: pasa a la coordinadora, que decide si lo llama ella o
   // se lo da a alguien mas. No es lo mismo que reagendar a secas, que deja

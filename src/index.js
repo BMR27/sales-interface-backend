@@ -53,6 +53,7 @@ const { startFullvectorRetryJob } = require("./jobs/fullvectorRetry");
 const { startEntregasSyncJob } = require("./jobs/entregasSync");
 const { startPurgaGrabacionesJob } = require("./jobs/purgaGrabaciones");
 const { startReactivarDescartadosJob } = require("./jobs/reactivarDescartados");
+const { startCierrePorPlazoJob } = require("./jobs/cierrePorPlazo");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -180,4 +181,5 @@ app.listen(PORT, () => {
   startMonitoringJob();
   startPurgaGrabacionesJob();
   startReactivarDescartadosJob();
+  startCierrePorPlazoJob();
 });

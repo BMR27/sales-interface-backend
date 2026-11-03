@@ -15,7 +15,20 @@ const prisma = require("./prisma");
 const { getParametros } = require("./parametros");
 
 // Los motivos que pueden volver a la cola.
-const MOTIVOS_REACTIVABLES = ["NO_CONTESTO", "LO_PENSARA", "PRECIO"];
+// Los que vale la pena reintentar semanas despues. SIN_DINERO entra
+// porque la situacion del cliente cambia; los descartes automaticos de 72
+// horas tambien, que es el caso de "esa racha de horarios fue mala".
+// LO_PENSARA y PRECIO siguen aqui para los leads historicos que los traen,
+// aunque ya no se puedan capturar (ver src/lib/motivosDescarte.js).
+const MOTIVOS_REACTIVABLES = [
+  "NO_CONTESTO",
+  "NO_CONTESTO_72H",
+  "RECHAZO_72H",
+  "FUERA_SERVICIO_72H",
+  "SIN_DINERO",
+  "LO_PENSARA",
+  "PRECIO",
+];
 
 // Los leads descartados que cumplen el criterio.
 //

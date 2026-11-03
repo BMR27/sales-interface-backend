@@ -175,16 +175,23 @@ router.post("/llamada-fin", twilioSignatureMiddleware, async (req, res) => {
         data: { estado: "FALLIDA", error: DialCallStatus },
       });
 
-      // Nadie contestó: el protocolo decide si el lead vuelve a la fila
-      // tras una espera o si ya se agotaron los intentos (ver
-      // src/lib/protocoloLeads.js). Va aquí y no en el panel porque la
-      // vendedora puede cerrar la pestaña sin registrar nada.
+      // Nadie contestó: el protocolo decide cuánto espera el lead antes de
+      // volver a repartirse -- depende de cómo terminó la llamada -- y si
+      // ya agotó sus 72 horas en cola (ver src/lib/protocoloLeads.js). Va
+      // aquí y no en el panel porque la vendedora puede cerrar la pestaña
+      // sin registrar nada.
       const intento = await prisma.llamada.findUnique({
         where: { callSid: CallSid },
         select: { leadId: true, tenantId: true },
       });
       if (intento?.leadId) {
-        await aplicarProtocoloNoContesto({ leadId: intento.leadId, tenantId: intento.tenantId });
+        await aplicarProtocoloNoContesto({
+          leadId: intento.leadId,
+          tenantId: intento.tenantId,
+          // Lo que Twilio dice que pasó: es lo que separa "no contestó" de
+          // "rechazó" y de "fuera de servicio", y cada uno espera distinto.
+          desenlaceTwilio: DialCallStatus,
+        });
       }
     }
   } catch (err) {

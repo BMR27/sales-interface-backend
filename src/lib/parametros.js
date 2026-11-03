@@ -60,34 +60,71 @@ const DEFINICION = {
     default: 3,
     min: 1,
     max: 20,
-    label: "Intentos para contar un lead como 'no contesto'",
+    label: "Intentos para contar un lead como 'no contesto' en el reporte",
     sufijo: "intentos",
     ayuda:
-      "Cuantas veces se le marca a un lead que nunca contesta antes de darlo por perdido. Al llegar a este numero el lead se descarta solo con motivo 'No contesto' y cuenta como basura de la base en el tablero de Calidad.",
+      "A partir de cuantos intentos sin respuesta el tablero de Calidad cuenta el lead como basura de la base. Ya no descarta nada: de eso se encarga el corte por horas del protocolo de llamada.",
     grupo: "Calidad de leads",
   },
-  // Entre intento e intento tiene que pasar un rato. Marcarle tres veces
-  // seguidas en cinco minutos no es insistir, es quemar al cliente -- y
-  // ademas agota el protocolo sin haberle dado una oportunidad real.
-  reintentoEsperaMinutos: {
-    default: 90,
+  // Las tres esperas del protocolo de secuencialidad. Cada una depende de
+  // como termino la llamada: a quien rechaza se le da mas aire que a quien
+  // simplemente no estaba, y a un numero fuera de servicio mas todavia.
+  esperaNoContestaMin: {
+    default: 120,
     min: 5,
     max: 1440,
-    label: "Espera entre intentos de llamada",
+    label: "Espera cuando no contesta o manda buzon",
     sufijo: "minutos",
     ayuda:
-      "Cuando el cliente no contesta, el lead vuelve a la fila pero no se reparte hasta que pase este tiempo. Puede tomarlo otra vendedora y otro dia.",
-    grupo: "Calidad de leads",
+      "Cuanto espera el lead en la cola antes de poder repartirse otra vez, cuando sonaron los rings y nadie contesto.",
+    grupo: "Protocolo de llamada",
   },
-  // Nace apagado a proposito: devolver descartados a la cola cambia la
-  // carga de trabajo del equipo y el porcentaje de calidad de la base.
-  // Encenderlo es una decision de la empresa, no un default.
+  esperaRechazaMin: {
+    default: 180,
+    min: 5,
+    max: 1440,
+    label: "Espera cuando rechaza la llamada",
+    sufijo: "minutos",
+    ayuda:
+      "Cuando el cliente cuelga o el numero comunica. Se le da mas aire que a quien no contesto: insistir de inmediato a quien acaba de colgar lo quema.",
+    grupo: "Protocolo de llamada",
+  },
+  esperaFueraServicioMin: {
+    default: 240,
+    min: 5,
+    max: 1440,
+    label: "Espera cuando el numero esta fuera de servicio",
+    sufijo: "minutos",
+    ayuda:
+      "Cuando la red no alcanza el numero (temporalmente fuera de servicio, fuera del area). Volver a marcar a los minutos da el mismo resultado.",
+    grupo: "Protocolo de llamada",
+  },
+  ventanaReasignacionMin: {
+    default: 15,
+    min: 5,
+    max: 240,
+    label: "Ventana para repartirlo una vez disponible",
+    sufijo: "minutos",
+    ayuda:
+      "El cuarto de hora en el que se espera que la coordinadora reparta el lead ya disponible. Pasado ese rato el lead NO se bloquea -- seguiria inalcanzable si nadie entra a tiempo -- pero se marca como atrasado en la cola.",
+    grupo: "Protocolo de llamada",
+  },
+  horasParaTrash: {
+    default: 72,
+    min: 1,
+    max: 720,
+    label: "Horas en cola antes de darlo por perdido",
+    sufijo: "horas",
+    ayuda:
+      "Contadas desde la PRIMERA llamada. Agotado el plazo sin que el cliente conteste nunca, el lead se descarta solo con la justificacion del desenlace que tuvo.",
+    grupo: "Protocolo de llamada",
+  },
   reactivarDescartadosAuto: {
     tipo: "boolean",
     default: false,
     label: "Reactivar descartados automaticamente",
     ayuda:
-      "Encendido, los leads descartados por 'No contesto', 'Lo pensara' o 'Por el precio' vuelven solos a la cola cuando pasa el plazo de abajo. Nunca vuelven los que dicen que el numero no sirve o que el cliente no quiere que lo llamen.",
+      "Encendido, los leads descartados por no contestar (incluidos los del corte de 72 horas) y por no tener dinero vuelven solos a la cola cuando pasa el plazo de abajo. Nunca vuelven los que dicen que el numero no sirve o que el cliente no quiere que lo llamen.",
     grupo: "Calidad de leads",
   },
   reactivarDescartadosDias: {
