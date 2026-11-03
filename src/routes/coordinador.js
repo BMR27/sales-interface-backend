@@ -187,6 +187,9 @@ router.get("/leads", async (req, res) => {
         take: 100,
         include: {
           vendedor: { select: { id: true, nombre: true } },
+          // La que atendió la llamada donde se pidió la reagenda: el
+          // protocolo pide devolvérsela a ella con prioridad.
+          reagendaVendedorSugerido: { select: { id: true, nombre: true } },
           // Cuantas veces se le ha marcado: es lo que separa un lead
           // totalmente nuevo de uno que ya rebotó y volvió a la cola.
           _count: { select: { llamadas: true } },

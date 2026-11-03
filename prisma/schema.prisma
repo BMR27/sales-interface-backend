@@ -34,6 +34,7 @@ model User {
 
   @@map("users")
   leadsDescartados Lead[] @relation("LeadDescartadoPor")
+  reagendasSugeridas Lead[] @relation("LeadReagendaSugerida")
 }
 
 enum Rol {
@@ -199,6 +200,18 @@ model Lead {
   productoCatalogo Producto? @relation(fields: [productoId], references: [id])
 
   fechaReagenda          DateTime?
+
+  // Vendedora que atendio la llamada en la que el cliente pidio la
+  // reagenda. El protocolo pide reasignarle a ella con prioridad cuando
+  // llegue la hora: ya hablo con el cliente y sabe de que se trata. No es
+  // una obligacion -- la coordinadora puede darsela a otra o llamar ella
+  // misma -- es una sugerencia que la cola muestra.
+  reagendaVendedorSugeridoId Int?
+  reagendaVendedorSugerido   User? @relation("LeadReagendaSugerida", fields: [reagendaVendedorSugeridoId], references: [id])
+
+  // Cuando se aviso que la reagenda ya vencia. Evita que la alerta se
+  // repita en cada corrida del tick.
+  reagendaAvisadaAt      DateTime?
   // Cuando este lead paso a manos de su vendedora actual. No es lo mismo que
   // createdAt: un lead de hace tres dias que hoy se reasigna es trabajo de
   // hoy, y el reporte de Progreso lo contaba como del dia en que entro -- la

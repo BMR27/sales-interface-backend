@@ -109,6 +109,16 @@ const DEFINICION = {
       "El cuarto de hora en el que se espera que la coordinadora reparta el lead ya disponible. Pasado ese rato el lead NO se bloquea -- seguiria inalcanzable si nadie entra a tiempo -- pero se marca como atrasado en la cola.",
     grupo: "Protocolo de llamada",
   },
+  reagendaMaxDias: {
+    default: 15,
+    min: 1,
+    max: 90,
+    label: "Dias maximos para reagendar una llamada",
+    sufijo: "dias",
+    ayuda:
+      "Contados desde la PRIMERA llamada, no desde hoy. El cliente puede pedir que le llamen el mismo dia o cualquier dia dentro de este plazo; mas alla deja de ser seguimiento.",
+    grupo: "Protocolo de llamada",
+  },
   horasParaTrash: {
     default: 72,
     min: 1,

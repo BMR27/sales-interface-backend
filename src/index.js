@@ -54,6 +54,7 @@ const { startEntregasSyncJob } = require("./jobs/entregasSync");
 const { startPurgaGrabacionesJob } = require("./jobs/purgaGrabaciones");
 const { startReactivarDescartadosJob } = require("./jobs/reactivarDescartados");
 const { startCierrePorPlazoJob } = require("./jobs/cierrePorPlazo");
+const { startAlertaReagendasJob } = require("./jobs/alertaReagendas");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -182,4 +183,5 @@ app.listen(PORT, () => {
   startPurgaGrabacionesJob();
   startReactivarDescartadosJob();
   startCierrePorPlazoJob();
+  startAlertaReagendasJob();
 });

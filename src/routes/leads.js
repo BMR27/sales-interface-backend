@@ -12,6 +12,7 @@ const { ocultarTelefonoLead, ocultarTelefonoLeads, ocultaTelefono } = require(".
 const { detallarMovimiento } = require("../lib/auditoria");
 
 const { filtroLead } = require("../lib/accesoLead");
+const { getParametros } = require("../lib/parametros");
 const { emitir } = require("../lib/eventos");
 
 const router = express.Router();
@@ -301,6 +302,25 @@ router.post("/:id/supervision", authMiddleware, async (req, res) => {
 
     const existing = await prisma.lead.findFirst({ where: filtroLead(req.user, id) });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
+
+    // El protocolo permite reagendar desde el mismo dia y hasta 15 dias
+    // despues de la PRIMERA llamada -- no de hoy. Un lead que lleva doce
+    // dias en seguimiento ya solo puede reagendarse tres mas: pasado ese
+    // punto deja de ser seguimiento y se vuelve un lead olvidado.
+    if (fechaReagenda) {
+      const { reagendaMaxDias } = await getParametros(req.user.tenantId);
+      const origen = existing.primeraLlamadaAt ?? existing.createdAt;
+      const limite = new Date(origen.getTime() + reagendaMaxDias * 86400000);
+      if (fechaReagenda > limite) {
+        return res.status(400).json({
+          error: `La re-llamada no puede pasar del ${limite.toLocaleDateString("es-MX")}: son ${reagendaMaxDias} dias desde la primera llamada`,
+          limite,
+        });
+      }
+      if (fechaReagenda.getTime() < Date.now() - 60000) {
+        return res.status(400).json({ error: "La re-llamada no puede quedar en el pasado" });
+      }
+    }
     if (!LEAD_STATUSES_ABIERTOS.includes(existing.status)) {
       return res.status(409).json({
         error:
@@ -322,7 +342,16 @@ router.post("/:id/supervision", authMiddleware, async (req, res) => {
         supervisionNota: nota || null,
         supervisionPedidaAt: new Date(),
         status: fechaReagenda ? "REAGENDADO" : existing.status,
-        ...(fechaReagenda ? { fechaReagenda } : {}),
+        ...(fechaReagenda
+          ? {
+              fechaReagenda,
+              // Quien atendio esta llamada vuelve a ser la candidata
+              // natural: ya hablo con el cliente. La coordinadora decide,
+              // pero la cola se lo propone.
+              reagendaVendedorSugeridoId: existing.vendedorId ?? req.user.id,
+              reagendaAvisadaAt: null,
+            }
+          : {}),
         // La espera del protocolo no aplica: aqui no es que no contestara,
         // es que el cliente pidio algo concreto y hay que atenderlo.
         disponibleDesde: null,
