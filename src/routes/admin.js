@@ -25,6 +25,7 @@ const { revocarSesiones } = require("../lib/sesiones");
 const { MOTIVOS_REACTIVABLES, dondeReactivable, reactivar } = require("../lib/reactivacionLeads");
 const { motivoLabel } = require("../lib/motivosDescarte");
 const { describirLeads } = require("../lib/semaforoLead");
+const { dondeRepartible, dondeEnEspera } = require("../lib/colaLeads");
 const { cronologiaDeLead } = require("../lib/cronologiaLead");
 const { emitir } = require("../lib/eventos");
 
@@ -269,8 +270,20 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
 // GET /api/admin/leads
 router.get("/leads", async (req, res) => {
   try {
-    const { status, vendedorId, search, source } = req.query;
+    const { status, vendedorId, search, source, cola } = req.query;
     const where = { tenantId: req.user.tenantId };
+
+    // Las dos mitades de la cola, que hasta ahora solo sabia separar la
+    // coordinadora: el aviso del tablero decia "19 sin asignar · 34 en
+    // espera" y al entrar aparecia la lista completa, sin forma de saber
+    // cuales eran cuales.
+    //
+    // Van en AND y no mezclados en `where` para no pisar el filtro de
+    // estatus ni el OR de la busqueda, que ya viven ahi.
+    const filtrosCola = [];
+    if (cola === "sin_asignar") filtrosCola.push(dondeRepartible(req.user.tenantId));
+    else if (cola === "en_espera") filtrosCola.push(dondeEnEspera(req.user.tenantId));
+    else if (cola === "asignados") filtrosCola.push({ vendedorId: { not: null } });
     if (status) {
       const parsed = parseLeadStatus(status);
       if (!parsed) {
@@ -295,10 +308,12 @@ router.get("/leads", async (req, res) => {
     // con las que se filtra, y tienen que seguir diciendo cuantos hay de cada
     // uno aunque ya se haya elegido uno. Lo demas (busqueda, vendedora,
     // origen) si aplica, o los numeros no corresponderian con la lista.
+    if (filtrosCola.length > 0) where.AND = [...(where.AND ?? []), ...filtrosCola];
+
     const whereSinStatus = { ...where };
     delete whereSinStatus.status;
 
-    const [leads, porStatus, sinAsignar] = await Promise.all([
+    const [leads, porStatus, sinAsignar, enEspera] = await Promise.all([
       prisma.lead.findMany({
         where,
         orderBy: { updatedAt: "desc" },
@@ -312,7 +327,8 @@ router.get("/leads", async (req, res) => {
         },
       }),
       prisma.lead.groupBy({ by: ["status"], where: whereSinStatus, _count: true }),
-      prisma.lead.count({ where: { ...whereSinStatus, vendedorId: null } }),
+      prisma.lead.count({ where: dondeRepartible(req.user.tenantId) }),
+      prisma.lead.count({ where: dondeEnEspera(req.user.tenantId) }),
     ]);
 
     const conteos = Object.fromEntries(LEAD_STATUSES.map((s) => [s, 0]));
@@ -336,6 +352,7 @@ router.get("/leads", async (req, res) => {
         ...conteos,
         total: Object.values(conteos).reduce((a, b) => a + b, 0),
         sinAsignar,
+        enEspera,
       },
     });
   } catch (err) {
