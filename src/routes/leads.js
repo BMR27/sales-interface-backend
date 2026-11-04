@@ -185,9 +185,28 @@ router.put("/:id", authMiddleware, async (req, res) => {
 
     const {
       nombre, telefono, producto, cantidad, hora, folio, monto, categoria, notas,
-      solicitudEspecial,
+      solicitudEspecial, productoId,
       shippingStreet, shippingNumber, shippingReferences, zipCode, state, colonia, municipio, lat, lng,
     } = req.body;
+
+    // El producto del catálogo SÍ se puede corregir desde el panel: cuando
+    // el lead llega con un nombre que no coincide con nada, la vendedora lo
+    // elige a mano y hay que guardarlo para no volver a preguntárselo en la
+    // siguiente apertura. Se valida que exista y que sea de su empresa --
+    // es un id que viene del navegador.
+    let productoIdValido;
+    if (productoId !== undefined) {
+      const existe = productoId
+        ? await prisma.producto.findFirst({
+            where: { id: Number(productoId), tenantId: req.user.tenantId },
+            select: { id: true },
+          })
+        : null;
+      if (productoId && !existe) {
+        return res.status(400).json({ error: "El producto no existe en tu catálogo" });
+      }
+      productoIdValido = existe?.id ?? null;
+    }
 
     // `status` ya NO se lee del body, y es el agujero más grande que tenía
     // este rediseño: esta ruta lo escribía tal cual se lo mandaran, así que
@@ -214,6 +233,9 @@ router.put("/:id", authMiddleware, async (req, res) => {
       where: { id },
       data: {
         nombre, producto, cantidad, hora, folio, monto, categoria, notas,
+        // Solo se toca si vino en el body: un PUT de direccion no puede
+        // borrar el enlace al catalogo.
+        ...(productoIdValido !== undefined ? { productoId: productoIdValido } : {}),
         // Peticiones que no caben en ningun catalogo -- un combo especial,
         // por ejemplo. Solo se toca si viene en el body, para que un PUT
         // de direccion no borre lo que la vendedora ya habia anotado.
