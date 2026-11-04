@@ -454,6 +454,22 @@ router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"),
 // vendedora, y aqui justamente el punto es que ella no va a poder.
 router.post("/:id/supervision", authMiddleware, async (req, res) => {
   try {
+    // La vendedora ya no entra por aquí: "Rellamar" hace esto mismo y
+    // mejor. Decidir entre "reagendar" y "pasar a supervisión" la obligaba
+    // a saber de memoria si la hora caía dentro de su turno; ahora captura
+    // lo que pidió el cliente y el servidor enruta (ver programarRellamada
+    // en src/lib/cicloLead.js).
+    //
+    // La guarda vive en el servidor y no sólo en la pantalla porque el
+    // documento lo pide: "validar cada transición también en backend, no
+    // solamente en la interfaz". Sin ella, una pestaña vieja abierta en
+    // otra ventana seguiría moviendo leads por el camino anterior, sin
+    // bitácora de asignaciones y sin respetar el turno.
+    if (req.user.rol === "VENDEDOR") {
+      return res.status(403).json({
+        error: "Usa el botón Rellamar: el sistema decide si el lead se queda contigo o pasa a la coordinadora.",
+      });
+    }
     const id = parseInt(req.params.id);
     const nota = typeof req.body?.nota === "string" ? req.body.nota.trim().slice(0, 300) : "";
     const fechaReagenda = req.body?.fechaReagenda ? new Date(req.body.fechaReagenda) : null;
@@ -542,6 +558,19 @@ router.post("/:id/supervision", authMiddleware, async (req, res) => {
 // persona en vez de que se pierda hasta el dia siguiente.
 router.post("/:id/devolver", authMiddleware, requirePermiso("vendedor.leads.devolver"), async (req, res) => {
   try {
+    // Igual que /supervision: la vendedora devuelve el lead registrando el
+    // resultado de la llamada, no a mano. Por aquí el lead volvía a la cola
+    // SIN el candado del protocolo -- disponible de inmediato -- así que
+    // bastaba devolverlo para saltarse las 2, 3 o 4 horas de espera que
+    // existen para no quemar al cliente.
+    //
+    // La coordinadora sí conserva el camino: a veces tiene que liberar un
+    // lead que no salió de una llamada.
+    if (req.user.rol === "VENDEDOR") {
+      return res.status(403).json({
+        error: "Registra el resultado de la llamada: el sistema devuelve el lead a la cola con su intervalo.",
+      });
+    }
     const id = parseInt(req.params.id);
     const motivo = typeof req.body?.motivo === "string" ? req.body.motivo.trim().slice(0, 300) : "";
 

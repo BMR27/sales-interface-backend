@@ -480,6 +480,11 @@ router.post("/leads/asignar", async (req, res) => {
           anterior: lead.vendedor,
           nuevo: { id: vendedor.id, nombre: vendedor.nombre },
           evento: lead.vendedor ? "reasignada" : "asignada",
+          leadAntes: lead,
+          // El `updateMany` de arriba no devuelve las filas, así que el
+          // "después" se arma con lo que se acaba de escribir. Es el mismo
+          // dato: todos los leads del lote quedan igual salvo su id.
+          leadDespues: { ...lead, vendedorId: vendedor.id, disponibleHasta: null },
         });
       }
 

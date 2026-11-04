@@ -11,6 +11,7 @@
 // en cada una, el mismo lead acabaria pintado de dos colores distintos
 // segun quien lo mire.
 const { getParametros } = require("./parametros");
+const { situacionDe, proximaAccionDe } = require("./situacionLead");
 
 // Lo que la pantalla necesita incluir para que esto funcione.
 const SELECT_SEMAFORO = {
@@ -34,8 +35,13 @@ const SELECT_SEMAFORO = {
 // La venta cerrada no entra en el semaforo de trabajo: ya no es algo que
 // alguien tenga que atender. Se devuelve como "vendido" para que la
 // pantalla la distinga de un lead en proceso.
+//
+// NO_CONCRETADO comparte el color del descarte, pero no la etiqueta: los
+// dos son cierres sin venta y ninguno es trabajo pendiente. Sin esta linea
+// caia en el `return` final y se pintaba como un lead vivo y trabajado --
+// un lead cerrado luciendo ambar en la cola, invitando a repartirlo.
 function colorDe(lead, intentos) {
-  if (lead.status === "DESCARTADO") return "trash";
+  if (lead.status === "DESCARTADO" || lead.status === "NO_CONCRETADO") return "trash";
   if (lead.status === "VENTA") return "vendido";
   if (intentos === 0) return "nuevo";
   return "trabajado";
@@ -76,8 +82,17 @@ function relojesDe(lead, params, ahora = new Date()) {
 // Arma el bloque que la pantalla dibuja. `intentos` y `ultimaLlamada` los
 // trae quien llama, que es el que ya tiene las llamadas a mano.
 function describirLead(lead, { intentos = 0, ultimaLlamada = null }, params, ahora = new Date()) {
+  const situacion = situacionDe(lead, ahora);
   return {
     semaforo: colorDe(lead, intentos),
+    // DONDE esta el lead, que es distinto de en que punto del ciclo va.
+    // Dos leads NUEVO pueden estar uno repartible y el otro bloqueado tres
+    // horas por el protocolo, y `status` no distingue eso. Va aqui, junto
+    // al semaforo, para que ninguna pantalla tenga que deducirlo cruzando
+    // cuatro campos -- que es como cada una acababa deduciendolo distinto.
+    situacion: situacion.clave,
+    situacionLabel: situacion.label,
+    proximaAccionAt: proximaAccionDe(lead),
     intentos,
     ultimaLlamada,
     asignadoAt: lead.asignadoAt ?? null,

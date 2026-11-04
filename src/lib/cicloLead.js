@@ -42,6 +42,7 @@ const {
   siguienteInicioHabil,
   formatearMinuto,
 } = require("./horariosVendedora");
+const { claveSituacion, proximaAccionDe } = require("./situacionLead");
 
 // Cuanto vive un token de idempotencia. Cubre de sobra un doble clic o el
 // reintento de un navegador que perdio la respuesta; mas alla de eso, una
@@ -118,6 +119,15 @@ function registrarAsignacion(tx, {
   resultado,
   motivo,
   automatico = false,
+  // El lead ANTES y DESPUES del movimiento. De ellos salen la cola
+  // anterior/nueva y la hora de la proxima accion, que el documento pide en
+  // el historial y que hasta ahora solo existian embebidas en el texto del
+  // motivo -- de donde no se pueden consultar.
+  //
+  // Se calculan aqui y no en cada quien llama para que no haya dos formas
+  // de responder la misma pregunta.
+  leadAntes,
+  leadDespues,
 }) {
   return tx.leadAsignacion.create({
     data: {
@@ -133,6 +143,9 @@ function registrarAsignacion(tx, {
       resultado: resultado ?? null,
       motivo: motivo ?? null,
       automatico,
+      colaAntes: leadAntes ? claveSituacion(leadAntes) : null,
+      colaDespues: leadDespues ? claveSituacion(leadDespues) : null,
+      proximaAccionAt: leadDespues ? proximaAccionDe(leadDespues) : null,
     },
   });
 }
@@ -320,6 +333,8 @@ async function aplicarTrash({ lead, def, motivoDescarte, nota, duplicadoDe, usua
       resultado: def.clave,
       motivo: motivoDescarte,
       automatico,
+      leadAntes: lead,
+      leadDespues: actualizado,
     });
 
     return actualizado;
@@ -417,6 +432,8 @@ async function aplicarVueltaACola({ lead, def, nota, usuario, tenantId, params, 
       resultado: def.clave,
       motivo: motivoDevolucion,
       automatico,
+      leadAntes: lead,
+      leadDespues: actualizado,
     });
 
     return actualizado;
@@ -595,6 +612,8 @@ async function programarRellamada({ leadId, tenantId, usuario, fecha, nota, toke
         evento: "rellamada",
         resultado: "RELLAMAR",
         motivo: razon,
+        leadAntes: lead,
+        leadDespues: actualizado,
       });
 
       return actualizado;

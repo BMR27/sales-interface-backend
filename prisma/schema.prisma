@@ -377,6 +377,23 @@ model LeadAsignacion {
   // true cuando lo decidio una regla y no una persona.
   automatico Boolean @default(false)
 
+  // La situacion operativa antes y despues del movimiento (ver
+  // src/lib/situacionLead.js): asignado | disponible | en_espera |
+  // rellamada | cerrado. El documento las pide como "cola anterior y
+  // nueva".
+  //
+  // Se guardan aunque se puedan recalcular, porque recalcularlas daria la
+  // situacion de HOY y no la de aquel momento: un lead que hoy esta cerrado
+  // estuvo disponible cuando se repartio, y la bitacora tiene que poder
+  // decirlo.
+  colaAntes   String?
+  colaDespues String?
+
+  // Cuando vuelve a tocar algo con este lead despues del movimiento: la
+  // hora pactada si se agendo una rellamada, el fin del candado si volvio a
+  // la cola con espera. Null cuando queda disponible o cerrado.
+  proximaAccionAt DateTime?
+
   createdAt DateTime @default(now())
 
   tenantId Int
