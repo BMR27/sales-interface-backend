@@ -82,7 +82,20 @@ async function crearAvisos(avisos) {
         mensaje: a.mensaje,
         enlace: a.enlace ?? null,
         categoria: CATEGORIAS.includes(a.categoria) ? a.categoria : "INFO",
+        // La clave es lo que evita que el mismo hito se avise dos veces
+        // (ver model Notificacion). Se perdia aqui: esta funcion la
+        // ignoraba y solo `crearAviso`, la singular, la respetaba. Un
+        // aviso que nace de un tick periodico -- como la alerta de atraso,
+        // que corre cada cinco minutos -- se repetia indefinidamente, y una
+        // campana con cuarenta lineas del mismo lead no se lee.
+        //
+        // Multiples NULL no chocan en el indice unico de Postgres, asi que
+        // los avisos de evento (uno por hecho, sin clave) siguen igual.
+        clave: a.clave ?? null,
       })),
+      // El que ya existe no se vuelve a crear, y los demas del lote si se
+      // insertan. Sin esto un solo duplicado tumbaria el lote entero.
+      skipDuplicates: true,
     });
     return count;
   } catch (err) {
