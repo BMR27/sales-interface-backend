@@ -23,6 +23,7 @@ const prisma = require("./prisma");
 const { getParametros } = require("./parametros");
 const { LEAD_STATUSES_ABIERTOS } = require("./leadStatus");
 const { emitir } = require("./eventos");
+const { siguienteInicioHabil } = require("./horariosVendedora");
 
 // Desde cuando aplica el descarte automatico por agotar el plazo.
 //
@@ -194,24 +195,98 @@ function etiquetaDeEspera(desenlace, esperaMin) {
   return `No contestó, vuelve en ${horas} h`;
 }
 
-// El descarte de las 72 horas. Lo usan el protocolo y el tick que barre
-// los leads que agotaron el plazo sin que nadie les volviera a marcar.
-async function descartarPorPlazo(leadId, desenlace) {
+// El cierre de las 72 horas.
+//
+// Da NO_CONCRETADO, no DESCARTADO. La diferencia no es cosmetica: aqui el
+// lead era legitimo y se agoto el protocolo sin contacto efectivo, mientras
+// que DESCARTADO significa que existe una causa valida de descarte
+// (inexistente, duplicado, el cliente dijo que no). Mezclarlos castigaba el
+// porcentaje de calidad de la base con leads que solo no contestaron, y
+// hacia que CF recibiera como trash algo que nunca lo fue.
+//
+// El motivo de cierre si se conserva (`motivoDescarte`), porque el
+// documento pide registrar la causa de no contacto.
+async function cerrarPorProtocolo(leadId, desenlace, { intentosEsperados, intentosRealizados } = {}) {
   await prisma.lead.update({
     where: { id: leadId },
     data: {
-      status: "DESCARTADO",
+      status: "NO_CONCRETADO",
       motivoDescarte: desenlace.motivoTrash,
       motivoDescarteNota: desenlace.justificacion,
       descartadoAt: new Date(),
-      // Sin `descartadoPorId`: no lo descarto una persona, lo descarto el
+      // Sin `descartadoPorId`: no lo cerro una persona, lo cerro el
       // protocolo. Atribuirselo a la ultima vendedora que marco seria
       // culparla de una regla que no decidio.
       disponibleDesde: null,
       disponibleHasta: null,
       requiereSupervision: false,
+      seguimientoIncompleto: false,
+      seguimientoIncompletoAt: null,
+      ...(Number.isFinite(intentosEsperados) ? { intentosEsperados } : {}),
+      ...(Number.isFinite(intentosRealizados) ? { intentosRealizados } : {}),
     },
   });
+}
+
+// Nombre anterior, conservado porque lo importan el job de cierre y los
+// scripts de mantenimiento. Apunta al mismo cierre.
+const descartarPorPlazo = cerrarPorProtocolo;
+
+// ¿Se hicieron los intentos que tocaban?
+//
+// Esta es la validacion critica del documento: "no es suficiente que hayan
+// transcurrido 72 horas, debe existir evidencia de los intentos
+// correspondientes". Sin ella el sistema cerraba por reloj leads que nadie
+// habia trabajado -- exactamente la oportunidad perdida que el plazo
+// pretendia evitar.
+//
+// Como se mide, sin inventar un numero fijo de llamadas (el documento lo
+// prohibe expresamente, porque los horarios y los resultados generan
+// intervalos distintos):
+//
+//   cada intento define CUANDO tocaba el siguiente -- su propia espera
+//   (2 h, 3 h o 4 h segun como termino), corrida hasta la proxima hora
+//   habil. Si ese momento ya paso y no hay un intento despues de el, se
+//   quedo a deber una llamada.
+//
+// Asi, un lead con una sola llamada en 72 horas sale incompleto (debia
+// haber varias), y uno al que se le insistio en cada ventana sale completo
+// aunque tenga menos intentos porque la mitad del plazo cayo en domingo.
+function evaluarSeguimiento({ llamadas, params, horarios, hasta = new Date() }) {
+  const intentos = (llamadas || [])
+    .slice()
+    .sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+
+  // Sin un solo intento no hay plazo que evaluar: las 72 horas ni siquiera
+  // arrancaron (arrancan con la PRIMERA llamada, no con el ingreso).
+  if (intentos.length === 0) {
+    return { completo: false, intentosEsperados: 1, intentosRealizados: 0, sinIntentos: true };
+  }
+
+  const ultimo = intentos[intentos.length - 1];
+  const desenlace = DESENLACES[ultimo.desenlaceProtocolo] ?? DESENLACES.NO_CONTESTA;
+  const esperaMs = params[desenlace.esperaParam] * 60000;
+
+  let vencia = new Date(new Date(ultimo.fecha).getTime() + esperaMs);
+  // No se le exige a nadie llamar fuera de turno: si el siguiente intento
+  // caia de madrugada, lo que tocaba era hacerlo al abrir.
+  if (horarios && horarios.length > 0) {
+    const habil = siguienteInicioHabil(horarios, vencia);
+    if (habil && habil > vencia) vencia = habil;
+  }
+
+  // Quedaba una llamada por hacer y el plazo se acabo antes de que se
+  // hiciera: el seguimiento esta incompleto.
+  const debiaOtro = vencia <= hasta;
+
+  return {
+    completo: !debiaOtro,
+    // "Esperados" es lo realmente hecho mas la que se quedo a deber: es el
+    // numero que la coordinadora necesita para entender el atraso.
+    intentosEsperados: intentos.length + (debiaOtro ? 1 : 0),
+    intentosRealizados: intentos.length,
+    proximoIntentoVencia: debiaOtro ? vencia : null,
+  };
 }
 
 // Filtro de Prisma para "se puede repartir ahora": o nunca estuvo en
@@ -237,6 +312,8 @@ module.exports = {
   filtroDisponible,
   filtroVentanaVencida,
   descartarPorPlazo,
+  cerrarPorProtocolo,
+  evaluarSeguimiento,
   clasificarDesenlace,
   DESENLACES,
 };

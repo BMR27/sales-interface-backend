@@ -12,7 +12,7 @@ const { siguienteFolio } = require("../lib/folios");
 const ROLES_ASIGNABLES = ["ADMIN", "ADMIN_OPERATIVO", "VENDEDOR", "COORDINADOR"];
 const { getNextVendedor } = require("../lib/assignment");
 const { parseWorkbookBuffer, validateRow, buildTemplateBuffer } = require("../lib/leadsImport");
-const { LEAD_STATUSES, parseLeadStatus } = require("../lib/leadStatus");
+const { LEAD_STATUSES, LEAD_STATUSES_CERRADOS_SIN_VENTA, parseLeadStatus } = require("../lib/leadStatus");
 const { inicioDeHoy, inicioDeSemana, inicioDeMes, inicioDeDia, finDeDia } = require("../lib/fechasLocales");
 const { notificarLeadsImportados } = require("../lib/notificaciones");
 const { crearAvisos } = require("../lib/avisos");
@@ -708,7 +708,7 @@ router.post("/leads/reactivar", adminMiddleware, async (req, res) => {
     // El tenantId sigue en el where, asi que no se puede reactivar un lead
     // de otra empresa mandando su id.
     const where = Array.isArray(ids) && ids.length > 0
-      ? { tenantId: req.user.tenantId, status: "DESCARTADO", id: { in: ids.map(Number).filter(Number.isFinite) } }
+      ? { tenantId: req.user.tenantId, status: { in: LEAD_STATUSES_CERRADOS_SIN_VENTA }, id: { in: ids.map(Number).filter(Number.isFinite) } }
       : dondeReactivable(req.user.tenantId, {
           motivos: Array.isArray(motivos) ? motivos : undefined,
           desde: desde ? inicioDeDia(desde) : undefined,

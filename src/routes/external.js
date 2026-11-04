@@ -222,7 +222,13 @@ const ESTADOS_AGRUPADOS = ["vendido", "pendiente", "cancelado"];
 
 function estadoAgrupado(leadStatus) {
   if (leadStatus === "VENTA") return "vendido";
-  if (leadStatus === "DESCARTADO") return "cancelado";
+  // NO_CONCRETADO agrupa con DESCARTADO a proposito: hacia afuera los dos
+  // son un lead que se cerro sin venta, y esta agrupacion es justamente el
+  // contrato viejo de tres cubos que los proveedores ya consumen. La
+  // distincion entre "hubo causa de descarte" y "se agoto el protocolo"
+  // viaja en `status` y en el motivo, que es donde se puede leer sin
+  // romperle el filtro a nadie.
+  if (leadStatus === "DESCARTADO" || leadStatus === "NO_CONCRETADO") return "cancelado";
   return "pendiente";
 }
 

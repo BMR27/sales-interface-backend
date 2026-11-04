@@ -86,6 +86,9 @@ function inicioDeAno(ref = new Date()) {
 }
 
 module.exports = {
-  inicioDeDia, finDeDia, rangoFechas, OFFSET,
+  inicioDeDia, finDeDia, rangoFechas, OFFSET, OFFSET_MINUTOS,
+  // Lo necesita src/lib/horariosVendedora.js para leer el dia de la semana
+  // y el minuto del dia de un instante sin repetir el truco del huso.
+  enHusoLocal,
   diaLocal, horaLocal, inicioDeHoy, inicioDeSemana, inicioDeMes, inicioDeAno,
 };

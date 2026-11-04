@@ -54,9 +54,24 @@ const MOTIVOS = [
     culpaDelProveedor: true,
   },
   {
+    // La etiqueta cambio a la del documento de secuencialidad ("no recuerda
+    // haberse registrado"), que es como lo dice el cliente en la llamada.
+    // La CLAVE no se toca: de ella cuelga el historico y el reporte de
+    // calidad, y renombrarla partiria la serie en dos.
     clave: "NO_SOLICITO",
-    label: "Nunca pidió informes",
+    label: "No recuerda haberse registrado",
     ayuda: "El cliente dice que no dejó sus datos en ningún lado.",
+    culpaDelProveedor: true,
+  },
+  {
+    // Por ahora lo marca una persona durante la llamada. El catalogo
+    // centralizado de numeros bloqueados queda expresamente fuera de esta
+    // entrega (ver "Propuesta futura - Blacklist" del documento): sin el,
+    // este motivo es una observacion de la vendedora, no una coincidencia
+    // automatica.
+    clave: "BLACKLIST",
+    label: "Blacklist identificado",
+    ayuda: "Número marcado para no volver a contactar.",
     culpaDelProveedor: true,
   },
 

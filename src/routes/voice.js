@@ -4,7 +4,6 @@ const twilioSignatureMiddleware = require("../middleware/twilioSignature");
 const { generateVoiceToken, buildDialTwiml, vendedorIdDesdeFrom } = require("../lib/twilioVoice");
 const { getParametros } = require("../lib/parametros");
 const { registrarIntento, registrarDesenlace } = require("../lib/historialLlamadas");
-const { aplicarProtocoloNoContesto } = require("../lib/protocoloLeads");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -104,7 +103,7 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
           select: { vendedorId: true, status: true },
         });
         if (!ajeno) motivoFallo = "inexistente";
-        else if (ajeno.status === "DESCARTADO") motivoFallo = "descartado";
+        else if (ajeno.status === "DESCARTADO" || ajeno.status === "NO_CONCRETADO") motivoFallo = "descartado";
         else if (ajeno.vendedorId === null) motivoFallo = "en_cola";
         else motivoFallo = "reasignado";
       } else if (lead && !lead.telefono) {
@@ -239,24 +238,22 @@ router.post("/llamada-fin", twilioSignatureMiddleware, async (req, res) => {
         data: { estado: "FALLIDA", error: DialCallStatus },
       });
 
-      // Nadie contestó: el protocolo decide cuánto espera el lead antes de
-      // volver a repartirse -- depende de cómo terminó la llamada -- y si
-      // ya agotó sus 72 horas en cola (ver src/lib/protocoloLeads.js). Va
-      // aquí y no en el panel porque la vendedora puede cerrar la pestaña
-      // sin registrar nada.
-      const intento = await prisma.llamada.findUnique({
-        where: { callSid: CallSid },
-        select: { leadId: true, tenantId: true },
-      });
-      if (intento?.leadId) {
-        await aplicarProtocoloNoContesto({
-          leadId: intento.leadId,
-          tenantId: intento.tenantId,
-          // Lo que Twilio dice que pasó: es lo que separa "no contestó" de
-          // "rechazó" y de "fuera de servicio", y cada uno espera distinto.
-          desenlaceTwilio: DialCallStatus,
-        });
-      }
+      // Aquí NO se mueve el lead, aunque nadie haya contestado.
+      //
+      // Antes sí: el webhook devolvía el lead a la cola en el instante en
+      // que Twilio avisaba. Eso dejó de funcionar al volverse la vendedora
+      // quien tipifica el resultado -- el webhook llega al colgar, ella
+      // elige en el modal un momento después, y el lead ya no era suyo
+      // cuando intentaba guardar. El resultado era un error de "lead no
+      // encontrado" sobre una llamada que sí ocurrió.
+      //
+      // Lo que sí queda escrito es cómo terminó la llamada
+      // (`registrarDesenlace`, arriba), que es el dato de Twilio y nadie
+      // más lo tiene. El lead lo mueve quien registra el resultado.
+      //
+      // La red de seguridad para la vendedora que cierra la pestaña sin
+      // registrar nada es src/jobs/resultadosPendientes.js: pasados unos
+      // minutos aplica el protocolo con el desenlace que Twilio reportó.
     }
   } catch (err) {
     console.error("no se pudo registrar el fin de la llamada", err);

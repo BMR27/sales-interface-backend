@@ -75,7 +75,7 @@ function clasificarLead(lead, llamadas, umbralIntentos) {
     if (intentos >= umbralIntentos) return "NO_CONTESTO";
   }
 
-  if (lead.status === "DESCARTADO") return "DESCARTADO_OTRO";
+  if (lead.status === "DESCARTADO" || lead.status === "NO_CONCRETADO") return "DESCARTADO_OTRO";
 
   // Nuevo y todavia sin agotar los intentos. No es basura ni es venta:
   // es trabajo pendiente, y mezclarlo con cualquiera de los dos miente.
@@ -189,7 +189,7 @@ function agregar(leads, resumenPorLead, umbralIntentos, filtro = () => true) {
     const trash = motivoCapturado
       ? esTrash(lead.motivoDescarte)
       : categoria === "NO_EXISTE" || categoria === "NO_CONTESTO";
-    const noVendio = lead.status === "DESCARTADO" && !trash;
+    const noVendio = (lead.status === "DESCARTADO" || lead.status === "NO_CONCRETADO") && !trash;
     const clasificacion = { categoria, trash, noVendio, motivoCapturado };
 
     sumarA(total, clasificacion);

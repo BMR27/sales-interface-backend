@@ -28,9 +28,14 @@ async function apiKeyIdsDe(userId, tenantId) {
 function desenlaceDe(lead) {
   if (!lead) return { estado: "pendiente", detalle: "Recibido, aún sin asignar" };
   if (lead.status === "VENTA") return { estado: "vendido", detalle: "Venta concretada" };
-  if (lead.status === "DESCARTADO") {
+  // Los dos cierres sin venta se reportan igual de detallados. Lo que los
+  // separa es el motivo, que ya viaja abajo: NO_CONCRETADO siempre trae uno
+  // de los automaticos del protocolo ("no contesto en 72 horas"), y eso es
+  // exactamente lo que el proveedor necesita para discutir la calidad de su
+  // base sin que le contemos un "no contesto" como si fuera un rechazo.
+  if (lead.status === "DESCARTADO" || lead.status === "NO_CONCRETADO") {
     return {
-      estado: "descartado",
+      estado: lead.status === "NO_CONCRETADO" ? "no_concretado" : "descartado",
       detalle: motivoLabel(lead.motivoDescarte),
       motivo: lead.motivoDescarte ?? null,
       // La distincion que de verdad importa: si el lead nunca sirvio (y
@@ -107,7 +112,7 @@ function resumirCalidad(leads) {
     }
     if (lead.status === "VENTA") {
       resumen.vendidos += 1;
-    } else if (lead.status === "DESCARTADO") {
+    } else if (lead.status === "DESCARTADO" || lead.status === "NO_CONCRETADO") {
       resumen.descartados += 1;
       const clave = lead.motivoDescarte ?? "SIN_MOTIVO";
       if (!resumen.porMotivo[clave]) {

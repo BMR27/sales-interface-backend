@@ -119,6 +119,41 @@ const DEFINICION = {
       "Contados desde la PRIMERA llamada, no desde hoy. El cliente puede pedir que le llamen el mismo dia o cualquier dia dentro de este plazo; mas alla deja de ser seguimiento.",
     grupo: "Protocolo de llamada",
   },
+  // El limite del boton "Rellamar", que es el que usa la vendedora al
+  // hablar con el cliente. Va aparte de `reagendaMaxDias` porque se mide
+  // distinto: ese se cuenta desde la primera llamada y este desde HOY, que
+  // es lo unico que la vendedora puede prometer por telefono ("¿le marco el
+  // jueves?").
+  //
+  // Nace en 7 porque es lo que dice la matriz mas reciente. El documento
+  // anterior decia 15; de ahi que sea configurable y no una constante.
+  rellamarMaxDias: {
+    default: 7,
+    min: 1,
+    max: 90,
+    label: "Dias maximos para una rellamada",
+    sufijo: "dias",
+    ayuda:
+      "Contados desde hoy. Es el tope de lo que la vendedora puede ofrecerle al cliente en el boton Rellamar. Mas alla de este plazo deja de ser seguimiento y el lead se enfria.",
+    grupo: "Protocolo de llamada",
+  },
+  // Cuantos minutos despues de que vence la ventana de reparto se avisa.
+  //
+  // Es el "si pasan 15 minutos adicionales sin asignacion, activar alerta
+  // de atraso" del documento. Comparte valor por defecto con la ventana,
+  // pero son dos cosas: una es el plazo que se espera cumplir y la otra el
+  // momento en que se escala. La alerta NO bloquea: el lead se sigue
+  // pudiendo asignar despues, porque bloquearlo lo dejaria inalcanzable.
+  alertaAtrasoMin: {
+    default: 15,
+    min: 1,
+    max: 240,
+    label: "Minutos antes de avisar un reintento atrasado",
+    sufijo: "minutos",
+    ayuda:
+      "Pasado este rato desde que se cerro la ventana de reparto sin que nadie asignara el lead, se marca como atrasado y se avisa a la coordinadora. El lead sigue siendo asignable.",
+    grupo: "Protocolo de llamada",
+  },
   horasParaTrash: {
     default: 72,
     min: 1,

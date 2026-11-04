@@ -22,19 +22,20 @@ model User {
   tenantId Int?
   tenant   Tenant? @relation("TenantUsers", fields: [tenantId], references: [id])
 
-  leads            Lead[]
-  ventas           Venta[]
-  llamadas         Llamada[]
-  tenantsAprobados Tenant[]  @relation("TenantAprobadoPor")
-  leadsAsignados   Lead[]    @relation("LeadAsignadoPor")
-  apiKeysCreadas   ApiKey[]  @relation("ApiKeyCreadaPor")
-  notificaciones   Notificacion[]
-  sesiones         Sesion[]
-  grabaciones      GrabacionLlamada[]
+  leads              Lead[]
+  ventas             Venta[]
+  llamadas           Llamada[]
+  tenantsAprobados   Tenant[]           @relation("TenantAprobadoPor")
+  leadsAsignados     Lead[]             @relation("LeadAsignadoPor")
+  apiKeysCreadas     ApiKey[]           @relation("ApiKeyCreadaPor")
+  notificaciones     Notificacion[]
+  sesiones           Sesion[]
+  grabaciones        GrabacionLlamada[]
+  leadsDescartados   Lead[]             @relation("LeadDescartadoPor")
+  reagendasSugeridas Lead[]             @relation("LeadReagendaSugerida")
+  horarios           HorarioVendedora[]
 
   @@map("users")
-  leadsDescartados Lead[] @relation("LeadDescartadoPor")
-  reagendasSugeridas Lead[] @relation("LeadReagendaSugerida")
 }
 
 enum Rol {
@@ -85,25 +86,26 @@ model Tenant {
   proximoCobro DateTime?
   estadoCobro  EstadoCobro @default(AL_CORRIENTE)
 
-  users         User[]                 @relation("TenantUsers")
-  leads         Lead[]
-  ventas        Venta[]
-  prepagos      PrepagoGestion[]
-  prepagoNotas  PrepagoNota[]
-  apiKeys       ApiKey[]
-  incomingLeads IncomingLead[]
-  llamadas      Llamada[]
-  productos     Producto[]
-  movimientos   MovimientoInventario[]
-  appSettings   AppSetting[]
-  leadItems     LeadItem[]
-  rolePermisos  RolePermiso[]
-  auditLogs     AuditLog[]
+  users          User[]                 @relation("TenantUsers")
+  leads          Lead[]
+  ventas         Venta[]
+  prepagos       PrepagoGestion[]
+  prepagoNotas   PrepagoNota[]
+  apiKeys        ApiKey[]
+  incomingLeads  IncomingLead[]
+  llamadas       Llamada[]
+  productos      Producto[]
+  movimientos    MovimientoInventario[]
+  appSettings    AppSetting[]
+  leadItems      LeadItem[]
+  rolePermisos   RolePermiso[]
+  auditLogs      AuditLog[]
   notificaciones Notificacion[]
-  grabaciones   GrabacionLlamada[]
+  grabaciones    GrabacionLlamada[]
+  horarios       HorarioVendedora[]
+  folioContador  FolioContador?
 
   @@map("tenants")
-  folioContador   FolioContador?
 }
 
 enum TipoPersona {
@@ -179,8 +181,8 @@ model Lead {
   // checkCoverage en src/lib/fullvector.js). Se vuelve a consultar en cada
   // llamada, así que cuando allá se habilite cobertura nacional estos
   // leads se reetiquetan solos.
-  coberturaFv        Boolean?
-  coberturaFvAt      DateTime?
+  coberturaFv   Boolean?
+  coberturaFvAt DateTime?
 
   // Autoriza a un cliente sin sesión a compartir su ubicación desde
   // app/compartir-ubicacion/[token]/page.tsx (ver src/routes/public.js) --
@@ -199,7 +201,7 @@ model Lead {
   productoId       Int?
   productoCatalogo Producto? @relation(fields: [productoId], references: [id])
 
-  fechaReagenda          DateTime?
+  fechaReagenda DateTime?
 
   // Vendedora que atendio la llamada en la que el cliente pidio la
   // reagenda. El protocolo pide reasignarle a ella con prioridad cuando
@@ -242,30 +244,68 @@ model Lead {
   // a la fila pero no debe reaparecer de inmediato -- marcarle tres veces
   // seguidas en cinco minutos no es insistir, es quemarlo. Hasta esta
   // fecha no se reparte (ver src/lib/protocoloLeads.js).
-  disponibleDesde   DateTime?
+  disponibleDesde DateTime?
 
   // Cierre de la ventana de reasignacion. El protocolo de secuencialidad
   // pide repartir el lead entre las 2:00 y las 2:15 posteriores al intento
   // (3:00-3:15 si rechazo, 4:00-4:15 si estaba fuera de servicio): pasado
   // ese cuarto de hora el lead sigue en la cola pero se avisa, porque
   // llamar fuera de la ventana ya no respeta el ritmo acordado.
-  disponibleHasta   DateTime?
+  disponibleHasta DateTime?
 
   // Cuando se le marco por primera vez. Es el reloj de las 72 horas: el
   // plazo corre desde el primer intento, no desde el ultimo ni desde que
   // el lead entro.
-  primeraLlamadaAt  DateTime?
+  primeraLlamadaAt DateTime?
 
   // Como termino el ultimo intento, ya tipificado (NO_CONTESTA, RECHAZA,
   // FUERA_DE_SERVICIO). Decide cuanto espera el lead antes de volver a
   // repartirse y con que motivo se descarta al agotar las 72 horas.
-  ultimoDesenlace   String?
+  ultimoDesenlace String?
+
+  // El resultado EXACTO que eligio la vendedora en el modal "Resultado de
+  // llamada" (clave de src/lib/resultadosLlamada.js). Es el "subestatus"
+  // del documento: describe que paso en la llamada, mientras que `status`
+  // describe donde quedo el lead.
+  //
+  // Va aparte de `ultimoDesenlace` a proposito: ese es la clasificacion del
+  // protocolo (tres cubos, decide la espera) y este es lo que la persona
+  // realmente vio. "Rechaza la llamada" y "Temporalmente fuera de servicio"
+  // comparten cubo en algunos escenarios, pero no son lo mismo para el
+  // reporte de calidad ni para lo que se le explica al proveedor.
+  substatus   String?
+  substatusAt DateTime?
+
+  // Se vencieron las 72 horas pero la operacion NO hizo los intentos que
+  // tocaban, asi que el lead no se puede cerrar: sigue abierto, se marca y
+  // se avisa. Es la condicion de alerta del protocolo, no un motivo de
+  // descarte (ver src/jobs/cierrePorPlazo.js).
+  seguimientoIncompleto   Boolean   @default(false)
+  seguimientoIncompletoAt DateTime?
+  // Cuantos intentos se esperaban contra cuantos hubo, congelado en el
+  // momento de la evaluacion. Sin esto la coordinadora ve "atrasado" y no
+  // puede saber que le falto.
+  intentosEsperados       Int?
+  intentosRealizados      Int?
+
+  // La vendedora no tiene horario configurado y el sistema no pudo decidir
+  // si la rellamada caia dentro de su turno: el lead va a la coordinadora
+  // marcado para que alguien revise la disponibilidad de esa vendedora.
+  requiereRevisionHorario Boolean @default(false)
+
+  // El nombre tal como llego del proveedor, antes de cualquier correccion.
+  // Los leads de CF llegan con nombres mal capturados ("Evaristo.cruz") y la
+  // vendedora los corrige al hablar con el cliente; guardar el original es
+  // lo que permite revertir y, sobre todo, medir que porcentaje de la base
+  // viene mal escrito para devolverle esa retroalimentacion a CF.
+  // Null = nunca se ha editado.
+  nombreOriginal String?
 
   // El cliente pidio que le llamaran en otro momento y la vendedora no
   // puede atenderlo: pasa a la coordinadora, que decide si lo llama ella o
   // se lo da a alguien mas. No es lo mismo que reagendar a secas, que deja
   // el lead con la misma vendedora.
-  requiereSupervision Boolean  @default(false)
+  requiereSupervision Boolean   @default(false)
   supervisionNota     String?
   supervisionPedidaAt DateTime?
 
@@ -279,35 +319,188 @@ model Lead {
   // "no contesto" (3 intentos) vuelve a la cola y el protocolo lo descarta
   // otra vez en la primera llamada, porque sigue contando las 13 viejas.
   // Null = cuentan todas, que es el caso normal.
-  reintentosDesde   DateTime?
+  reintentosDesde DateTime?
 
-  motivoDescarte    String?
+  motivoDescarte     String?
   motivoDescarteNota String?
-  descartadoAt      DateTime?
-  descartadoPorId   Int?
-  descartadoPor     User?     @relation("LeadDescartadoPor", fields: [descartadoPorId], references: [id])
+  descartadoAt       DateTime?
+  descartadoPorId    Int?
+  descartadoPor      User?     @relation("LeadDescartadoPor", fields: [descartadoPorId], references: [id])
 
   incomingLead IncomingLead?
 
-  llamadas    Llamada[]
-  venta       Venta?
-  items       LeadItem[]
-  grabaciones GrabacionLlamada[]
+  llamadas      Llamada[]
+  venta         Venta?
+  items         LeadItem[]
+  grabaciones   GrabacionLlamada[]
+  asignaciones  LeadAsignacion[]
+  nombreCambios LeadNombreCambio[]
 
   @@index([tenantId, status])
+  // La cola de la coordinadora pregunta siempre lo mismo: de esta empresa,
+  // los que no tienen vendedora, vivos, y cuya espera ya paso.
+  @@index([tenantId, vendedorId, disponibleDesde])
   @@map("leads")
 }
 
+// Quien atendio este lead y cuando cambio de manos.
+//
+// Existe para una pregunta concreta de la coordinadora antes de repartir:
+// "¿a quien ya se le dio hoy?, ¿quien genero la rellamada?, ¿quien lo tuvo
+// la ultima vez?". Eso no se puede responder con Lead.vendedorId, que solo
+// guarda el presente, ni con el kardex, que es texto para auditar y no se
+// puede consultar por vendedora sin escarbar en JSON.
+//
+// Los nombres van desnormalizados, igual que en Lead.devueltoPorNombre: es
+// el dato historico de ese momento. Si la vendedora se da de baja, la
+// bitacora tiene que seguir diciendo quien atendio el lead.
+model LeadAsignacion {
+  id     Int  @id @default(autoincrement())
+  leadId Int
+  lead   Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  // Quien ejecuto el movimiento: la coordinadora que repartio, la vendedora
+  // que devolvio, o nadie cuando lo hizo el protocolo (ahi va `automatico`).
+  actorId     Int?
+  actorNombre String?
+
+  vendedorAnteriorId     Int?
+  vendedorAnteriorNombre String?
+  vendedorNuevoId        Int?
+  vendedorNuevoNombre    String?
+
+  // asignada | reasignada | devuelta | liberada | rellamada | cerrada
+  evento     String
+  // El resultado de llamada que origino el movimiento, cuando lo hubo.
+  resultado  String?
+  motivo     String?
+  // true cuando lo decidio una regla y no una persona.
+  automatico Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  tenantId Int
+
+  @@index([leadId, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([vendedorNuevoId, createdAt])
+  @@map("lead_asignaciones")
+}
+
+// Cada correccion del nombre del cliente.
+//
+// Dos usos: revertir un cambio equivocado, y contar cuantos nombres hubo
+// que corregir para devolverle a CF una medida de la calidad de su captura.
+// Por eso es tabla propia y no solo una linea del kardex: el kardex no se
+// puede agregar por periodo sin leer JSON fila por fila.
+model LeadNombreCambio {
+  id     Int  @id @default(autoincrement())
+  leadId Int
+  lead   Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  nombreAntes   String
+  nombreDespues String
+
+  userId     Int?
+  userNombre String?
+  createdAt  DateTime @default(now())
+
+  tenantId Int
+
+  @@index([leadId, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("lead_nombre_cambios")
+}
+
+// Turno de una vendedora: en que dias y a que horas se le puede dar trabajo.
+//
+// Lo necesita una sola regla, pero es la que decide a donde va el lead:
+// cuando el cliente pide que le llamen hoy mas tarde, la rellamada se queda
+// con la vendedora SOLO si esa hora cae dentro de su turno; si no, el lead
+// vuelve a la coordinadora. Sin horarios no hay forma de distinguir las dos
+// cosas y todas las rellamadas del mismo dia se quedarian con quien no va a
+// estar para atenderlas.
+//
+// Varias filas por dia a proposito: un turno partido (9-14 y 16-19) son dos
+// rangos, y forzar uno solo obligaria a capturar 9-19 y prometer llamadas a
+// la hora de la comida.
+//
+// Las horas van en MINUTOS desde medianoche (0..1439) y no como DateTime:
+// un turno no es un instante, es una franja que se repite. Guardarlo como
+// fecha obliga a inventar un dia y arrastra la zona horaria a un dato que
+// no la tiene.
+model HorarioVendedora {
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 0 = domingo ... 6 = sabado, leido en la zona de la operacion
+  // (America/Mexico_City, ver src/lib/fechasLocales.js).
+  diaSemana  Int
+  horaInicio Int
+  horaFin    Int
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([userId, diaSemana])
+  @@index([tenantId])
+  @@map("horarios_vendedora")
+}
+
+// Candado contra la misma accion guardada dos veces.
+//
+// Un doble clic en "Guardar resultado", o un reintento del navegador tras
+// una conexion que se cayo despues de que el servidor ya escribio, dejaban
+// dos intentos contados, dos notificaciones a CF y un lead con el contador
+// inflado. La pantalla manda un token por cada modal que abre; el primero
+// que llega gana y los que vengan detras con el mismo token reciben la
+// respuesta original sin volver a aplicar nada.
+//
+// Se limpia sola: ver src/jobs/monitoring.js. Nada depende de conservarla.
+model AccionIdempotente {
+  token     String   @id
+  leadId    Int?
+  accion    String
+  // La respuesta que se le dio al primer request, para poder repetirla tal
+  // cual. Sin esto el reintento recibiria un 409 y la pantalla mostraria un
+  // error por una accion que si funciono.
+  resultado Json?
+  createdAt DateTime @default(now())
+
+  tenantId Int?
+
+  @@index([createdAt])
+  @@map("acciones_idempotentes")
+}
+
 // Ciclo de vida de un lead (ver src/lib/leadStatus.js para etiquetas):
-//   NUEVO      -> Nuevo ingreso: ingresado a sistema
-//   REAGENDADO -> Re-Llamar: el cliente pide llamar otro día
-//   DESCARTADO -> el cliente expresa que no lo quiere
-//   VENTA      -> Concretado: venta aceptada por el cliente
+//   NUEVO         -> Nuevo ingreso: ingresado a sistema
+//   REAGENDADO    -> Re-Llamar: el cliente pide llamar otro día
+//   DESCARTADO    -> Desechada / Trash: hay una causa valida de descarte
+//   VENTA         -> Concretado: venta aceptada por el cliente
+//   NO_CONCRETADO -> se agoto correctamente el protocolo sin contacto efectivo
+//
+// DESCARTADO y NO_CONCRETADO son los dos cierres y NO son lo mismo, aunque
+// hasta ahora cayeran en el mismo cubo: en el primero existe una causa
+// definitiva (numero inexistente, duplicado, el cliente rechazo la compra);
+// en el segundo el lead era legitimo y simplemente se agotaron las 72 horas
+// haciendo los intentos que tocaban sin que nadie contestara. Separarlos es
+// lo que permite medir la calidad de la base sin castigarla por leads que
+// solo no alcanzaron a trabajarse, y lo que evita reportarle a CF un trash
+// que no lo es.
+//
+// Hay un tercer desenlace que NO es un estatus: "seguimiento incompleto"
+// (se vencio el plazo pero la operacion no hizo los intentos). Es una
+// condicion de alerta sobre un lead que sigue ABIERTO -- vive en
+// Lead.seguimientoIncompleto, no aqui, porque cerrarlo seria justo el error
+// que el protocolo quiere evitar.
 enum LeadStatus {
   NUEVO
   REAGENDADO
   DESCARTADO
   VENTA
+  NO_CONCRETADO
 }
 
 enum LeadSource {
@@ -316,46 +509,46 @@ enum LeadSource {
 }
 
 model Venta {
-  id             Int      @id @default(autoincrement())
-  leadId         Int      @unique
-  lead           Lead     @relation(fields: [leadId], references: [id])
-  vendedorId     Int
-  vendedor       User     @relation(fields: [vendedorId], references: [id])
-  monto          Float
-  comision       Float
+  id                   Int       @id @default(autoincrement())
+  leadId               Int       @unique
+  lead                 Lead      @relation(fields: [leadId], references: [id])
+  vendedorId           Int
+  vendedor             User      @relation(fields: [vendedorId], references: [id])
+  monto                Float
+  comision             Float
   // Costo de envío cobrado al cliente (ver src/lib/shippingCost.js) --
   // separado de `monto` a propósito: la comisión del vendedor se calcula
   // solo sobre el producto, no sobre el flete. Lo que se cobra realmente
   // (y lo que se manda a FullVector como orderValue) es monto+costoEnvio.
-  costoEnvio     Float    @default(0)
-  folio          String?
+  costoEnvio           Float     @default(0)
+  folio                String?
   // Entrega realmente confirmada. Es la condición para pagar comisión (ver
   // src/lib/comisiones.js): hasta que alguien la confirma, la venta no suma
   // unidades. Antes se guardaba en true al cerrar la venta, así que no
   // distinguía nada.
-  entregaExitosa Boolean  @default(false)
+  entregaExitosa       Boolean   @default(false)
   entregaConfirmadaAt  DateTime?
   entregaConfirmadaPor String?
   // Cancelada o devuelta: resta sus unidades del acumulado de la quincena.
-  cancelada       Boolean   @default(false)
-  canceladaAt     DateTime?
-  canceladaMotivo String?
-  fecha          DateTime @default(now())
-  createdAt      DateTime @default(now())
+  cancelada            Boolean   @default(false)
+  canceladaAt          DateTime?
+  canceladaMotivo      String?
+  fecha                DateTime  @default(now())
+  createdAt            DateTime  @default(now())
 
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
-  fullvectorSyncStatus FullvectorSyncStatus @default(PENDING)
-  fullvectorOrderId    String?
+  fullvectorSyncStatus   FullvectorSyncStatus @default(PENDING)
+  fullvectorOrderId      String?
   // La orden se creó en FullVector pero su CP está fuera de la cobertura
   // de mensajería (trackingStatus NO_COVERAGE): no hay pago en efectivo
   // contra entrega. Esta es la base "prepago" -- se les llama aparte, se
   // cobra por transferencia y el paquete sale por mensajería tradicional.
-  fullvectorSinCobertura Boolean            @default(false)
-  fullvectorError      String?
-  fullvectorAttempts   Int                  @default(0)
-  fullvectorSyncedAt   DateTime?
+  fullvectorSinCobertura Boolean              @default(false)
+  fullvectorError        String?
+  fullvectorAttempts     Int                  @default(0)
+  fullvectorSyncedAt     DateTime?
 
   prepago PrepagoGestion?
 
@@ -377,10 +570,10 @@ model PrepagoGestion {
   // Cobro por transferencia. `pagoMonto` se guarda aparte del monto de la
   // venta: el cliente puede depositar de más o de menos y lo que importa
   // para liberar el envío es lo que realmente cayó.
-  pagoReferencia     String?
-  pagoMonto          Float?
-  pagoConfirmadoAt   DateTime?
-  pagoConfirmadoPor  String?
+  pagoReferencia    String?
+  pagoMonto         Float?
+  pagoConfirmadoAt  DateTime?
+  pagoConfirmadoPor String?
 
   // Envío por fuera de FullVector.
   paqueteria String?
@@ -407,10 +600,10 @@ model PrepagoNota {
   gestionId Int
   gestion   PrepagoGestion @relation(fields: [gestionId], references: [id], onDelete: Cascade)
 
-  nota         String
-  autorId      Int?
-  autorNombre  String
-  createdAt    DateTime @default(now())
+  nota        String
+  autorId     Int?
+  autorNombre String
+  createdAt   DateTime @default(now())
 
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id])
@@ -715,10 +908,10 @@ model Llamada {
   fecha      DateTime @default(now())
 
   // Identifica el intento en Twilio y lo amarra con su grabacion.
-  callSid String? @unique
+  callSid    String? @unique
   // Como termino la llamada segun Twilio: completed, no-answer, busy, failed.
   // null mientras no haya llegado el aviso (o si se marco fuera del panel).
-  desenlace String?
+  desenlace  String?
   // Si el cliente llego a contestar. Es lo que separa "le llame 5 veces y
   // nunca contesto" de "hable con el 5 veces".
   contestada Boolean @default(false)
@@ -748,14 +941,14 @@ model Llamada {
 // otro la llamada esta en curso, y si nunca llega el segundo la fila queda
 // como constancia de que esa llamada no dejo audio.
 model GrabacionLlamada {
-  id           Int       @id @default(autoincrement())
-  callSid      String    @unique
-  recordingSid String?   @unique
+  id           Int             @id @default(autoincrement())
+  callSid      String          @unique
+  recordingSid String?         @unique
   estado       GrabacionEstado @default(EN_CURSO)
   duracion     Int?
   grabadaAt    DateTime?
   error        String?
-  createdAt    DateTime  @default(now())
+  createdAt    DateTime        @default(now())
 
   // Opcionales porque el webhook puede llegar sin poder resolverlos (un
   // lead borrado, un parametro manipulado): es preferible una grabacion

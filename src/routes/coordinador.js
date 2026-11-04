@@ -25,11 +25,17 @@ const STATUS_GROUPS = {
   CONCRETADA: ["VENTA"],
   RECHAZADA: ["DESCARTADO"],
   REAGENDADA: ["REAGENDADO"],
+  // Grupo propio, no mezclado con RECHAZADA: un lead que se cerro porque se
+  // agotaron las 72 horas sin contacto no es un rechazo, y meterlo en el
+  // mismo filtro impediria a la coordinadora distinguir lo que su equipo
+  // trabajo y no cerro de lo que el cliente rechazo.
+  NO_CONCRETADA: ["NO_CONCRETADO"],
 };
 
 function classify(status) {
   if (STATUS_GROUPS.CONCRETADA.includes(status)) return "concretada";
   if (STATUS_GROUPS.RECHAZADA.includes(status)) return "rechazada";
+  if (STATUS_GROUPS.NO_CONCRETADA.includes(status)) return "noConcretada";
   if (STATUS_GROUPS.REAGENDADA.includes(status)) return "reagendada";
   return "pendiente";
 }
@@ -60,7 +66,7 @@ router.get("/overview", async (req, res) => {
     for (const v of vendedores) {
       porVendedor[v.id] = {
         id: v.id, nombre: v.nombre,
-        asignados: 0, pendientes: 0, concretadas: 0, rechazadas: 0, reagendadas: 0,
+        asignados: 0, pendientes: 0, concretadas: 0, rechazadas: 0, reagendadas: 0, noConcretadas: 0,
         ventasHoy: 0, comisionHoy: 0,
       };
     }
@@ -85,12 +91,23 @@ router.get("/overview", async (req, res) => {
       concretadas: 0,
       rechazadas: 0,
       reagendadas: 0,
+      noConcretadas: 0,
+    };
+
+    // Un solo mapa en vez de la cadena de ternarios que habia: al agregar
+    // un quinto estatus, el ultimo `else` lo habria contado como reagendado
+    // sin que nada fallara ni avisara.
+    const CAMPO = {
+      pendiente: "pendientes",
+      concretada: "concretadas",
+      rechazada: "rechazadas",
+      reagendada: "reagendadas",
+      noConcretada: "noConcretadas",
     };
 
     for (const row of grouped) {
       const bucket = porVendedor[row.vendedorId];
-      const key = classify(row.status);
-      const field = key === "pendiente" ? "pendientes" : key === "concretada" ? "concretadas" : key === "rechazada" ? "rechazadas" : "reagendadas";
+      const field = CAMPO[classify(row.status)];
       // Un lead sin vendedora no esta asignado a nadie: contarlo en
       // "asignados" inflaba el tablero con la propia cola por repartir.
       // Cuantos son exactamente se cuenta aparte (`repartibles`): aqui
@@ -395,6 +412,10 @@ router.get("/progreso", async (req, res) => {
       reagendados: 0,
       concretados: 0,
       descartados: 0,
+      noConcretados: 0,
+      // Los que vencieron el plazo sin los intentos que tocaban: siguen
+      // abiertos y son lo primero que la coordinadora tiene que repartir.
+      seguimientoIncompleto: 0,
       monto: 0,
     };
 
@@ -420,6 +441,9 @@ router.get("/progreso", async (req, res) => {
       else if (lead.status === "REAGENDADO") resumen.reagendados += 1;
       else if (lead.status === "VENTA") resumen.concretados += 1;
       else if (lead.status === "DESCARTADO") resumen.descartados += 1;
+      else if (lead.status === "NO_CONCRETADO") resumen.noConcretados += 1;
+
+      if (lead.seguimientoIncompleto) resumen.seguimientoIncompleto += 1;
 
       const monto = lead.venta?.monto ?? 0;
       resumen.monto += monto;
@@ -434,7 +458,10 @@ router.get("/progreso", async (req, res) => {
         if (reasignado) b.reasignados += 1;
         if (n === 0) b.sinIntentos += 1;
         if (lead.status === "VENTA") { b.concretados += 1; b.monto += monto; }
-        else if (lead.status === "DESCARTADO") b.descartados += 1;
+        // Los dos cierres sin venta cuentan igual para la vendedora: en los
+        // dos el lead salio de su lista sin venta. Si NO_CONCRETADO cayera
+        // en `abiertos`, su columna de pendientes incluiria leads cerrados.
+        else if (lead.status === "DESCARTADO" || lead.status === "NO_CONCRETADO") b.descartados += 1;
         else b.abiertos += 1;
       }
     }
@@ -448,7 +475,7 @@ router.get("/progreso", async (req, res) => {
       const d = porDia.get(dia);
       d.total += 1;
       if (lead.status === "VENTA") { d.concretados += 1; d.monto += lead.venta?.monto ?? 0; }
-      else if (lead.status === "DESCARTADO") d.descartados += 1;
+      else if (lead.status === "DESCARTADO" || lead.status === "NO_CONCRETADO") d.descartados += 1;
     }
     const serie = Array.from(porDia.values()).sort((a, b) => a.dia.localeCompare(b.dia));
 
@@ -590,6 +617,10 @@ router.get("/historial/export", async (req, res) => {
     const COLOR_ESTATUS = {
       concretada: "FF1B9247",
       rechazada: "FFC0392B",
+      // Mas apagado que el rechazo: no es un cliente que dijo que no, es un
+      // lead que se quedo sin tiempo. Verlos del mismo rojo en el reporte
+      // haria creer que la base es peor de lo que es.
+      noConcretada: "FF9A6A2F",
       reagendada: "FFB8860B",
       pendiente: "FF6B7280",
     };
@@ -689,8 +720,11 @@ router.post("/leads/:id/reactivar", async (req, res) => {
     if (lead.status === "VENTA") {
       return res.status(409).json({ error: "Este lead ya tiene una venta cerrada" });
     }
-    if (lead.status !== "DESCARTADO") {
-      return res.status(409).json({ error: "Este lead no esta descartado" });
+    // Los dos cierres sin venta se pueden rehabilitar. NO_CONCRETADO es el
+    // caso mas frecuente: el lead era bueno y se le acabo el plazo, y la
+    // coordinadora decide que vale la pena un intento mas.
+    if (!["DESCARTADO", "NO_CONCRETADO"].includes(lead.status)) {
+      return res.status(409).json({ error: "Este lead no esta cerrado" });
     }
 
     const actualizado = await prisma.lead.update({
@@ -700,6 +734,20 @@ router.post("/leads/:id/reactivar", async (req, res) => {
         vendedorId: null,
         asignadoAt: null,
         asignadoPorCoordinador: false,
+        // Sin esto el lead vuelve a la cola arrastrando el motivo con que
+        // se cerro, y el tablero de calidad lo sigue contando como basura.
+        motivoDescarte: null,
+        motivoDescarteNota: null,
+        descartadoAt: null,
+        descartadoPorId: null,
+        seguimientoIncompleto: false,
+        seguimientoIncompletoAt: null,
+        // El protocolo empieza de cero: contando desde su primera llamada
+        // historica, ya habria agotado las 72 horas y se cerraria solo en
+        // el primer intento.
+        reintentosDesde: new Date(),
+        disponibleDesde: null,
+        disponibleHasta: null,
         devueltoAt: new Date(),
         devueltoMotivo: motivo || "Descartado por error, reactivado para volver a llamar",
         devueltoPorNombre: req.user.nombre,
@@ -708,8 +756,8 @@ router.post("/leads/:id/reactivar", async (req, res) => {
 
     detallarMovimiento(req, {
       entidadId: id,
-      descripcion: `Reactivo el lead descartado ${lead.nombre}`,
-      antes: { status: "DESCARTADO", vendedor: lead.vendedorId },
+      descripcion: `Reactivo el lead cerrado ${lead.nombre}`,
+      antes: { status: lead.status, motivo: lead.motivoDescarte, vendedor: lead.vendedorId },
       despues: { status: "NUEVO", vendedor: "sin asignar", motivo: actualizado.devueltoMotivo },
     });
 

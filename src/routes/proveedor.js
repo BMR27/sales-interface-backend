@@ -99,7 +99,10 @@ router.get("/leads", async (req, res) => {
     };
 
     if (estado === "vendido") where.assignedLead = { status: "VENTA" };
-    else if (estado === "descartado") where.assignedLead = { status: "DESCARTADO" };
+    // El filtro "descartado" del proveedor incluye los dos cierres sin
+    // venta: es la lista de sus leads que no prosperaron. El motivo, que es
+    // lo que de verdad discute con nosotros, viaja en cada fila.
+    else if (estado === "descartado") where.assignedLead = { status: { in: ["DESCARTADO", "NO_CONCRETADO"] } };
     else if (estado === "en_proceso") where.assignedLead = { status: { in: ["NUEVO", "REAGENDADO"] } };
     else if (estado === "pendiente") where.assignedLeadId = null;
 

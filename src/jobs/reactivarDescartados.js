@@ -10,6 +10,7 @@
 // volvería a descartar los leads en la primera llamada.
 const prisma = require("../lib/prisma");
 const { dondeReactivable, reactivar, reglaAutomatica } = require("../lib/reactivacionLeads");
+const { LEAD_STATUSES_CERRADOS_SIN_VENTA } = require("../lib/leadStatus");
 
 // El plazo se mide en días, así que una corrida diaria basta.
 const INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -19,7 +20,10 @@ async function reactivarVencidos() {
   // leer parámetros para nada.
   const conDescartados = await prisma.lead.groupBy({
     by: ["tenantId"],
-    where: { status: "DESCARTADO" },
+    // Los dos cierres sin venta. NO_CONCRETADO (se agoto el plazo sin que
+    // nadie contestara) es justo el que la regla diaria existe para
+    // reintentar semanas despues: "esa racha de horarios fue mala".
+    where: { status: { in: LEAD_STATUSES_CERRADOS_SIN_VENTA } },
     _count: true,
   });
 

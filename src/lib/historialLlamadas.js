@@ -69,8 +69,8 @@ async function registrarDesenlace({ callSid, desenlace, duracion }) {
 }
 
 // El intento abierto al que le corresponde un resultado, si lo hay.
-async function intentoAbierto(leadId, vendedorId) {
-  return prisma.llamada.findFirst({
+async function intentoAbierto(leadId, vendedorId, cliente = prisma) {
+  return cliente.llamada.findFirst({
     where: {
       leadId,
       vendedorId,
@@ -100,6 +100,16 @@ async function registrarResultado({
   estadoAntes,
   estadoDespues,
   implicaContacto = true,
+  // Cliente de Prisma a usar. Por defecto el global, pero src/lib/cicloLead.js
+  // pasa el de una transaccion: el estatus del lead y la linea de su
+  // historial tienen que escribirse juntos o no escribirse. Si el lead
+  // cambiara sin dejar rastro, el intento quedaria sin explicacion y el
+  // contador de intentos (que decide el cierre de las 72 horas) mentiria.
+  cliente = prisma,
+  // Dentro de una transaccion el "nunca lanza" de abajo es veneno: tragarse
+  // el error dejaria el lead actualizado y el historial no, que es justo lo
+  // que la transaccion existe para impedir.
+  propagarError = false,
 }) {
   try {
     if (!leadId || !vendedorId || !tenantId) return null;
@@ -112,9 +122,9 @@ async function registrarResultado({
     };
     if (Number.isFinite(duracion) && duracion > 0) datos.duracion = duracion;
 
-    const abierto = await intentoAbierto(leadId, vendedorId);
+    const abierto = await intentoAbierto(leadId, vendedorId, cliente);
     if (abierto) {
-      return await prisma.llamada.update({
+      return await cliente.llamada.update({
         where: { id: abierto.id },
         data: {
           ...datos,
@@ -125,7 +135,7 @@ async function registrarResultado({
       });
     }
 
-    return await prisma.llamada.create({
+    return await cliente.llamada.create({
       data: {
         leadId,
         vendedorId,
@@ -137,6 +147,7 @@ async function registrarResultado({
       },
     });
   } catch (err) {
+    if (propagarError) throw err;
     console.error("registrarResultado falló", leadId, err);
     return null;
   }

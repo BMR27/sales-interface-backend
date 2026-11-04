@@ -143,7 +143,9 @@ router.get("/por-buyer", async (req, res) => {
       if (estado === "VENTA") {
         b.vendidos += 1;
         b.monto += fila.assignedLead.venta?.monto ?? 0;
-      } else if (estado === "DESCARTADO") {
+      } else if (estado === "DESCARTADO" || estado === "NO_CONCRETADO") {
+        // Los dos cierres sin venta cuentan juntos aqui: para el proveedor
+        // la pregunta es cuantos de sus leads no llegaron a venta.
         b.descartados += 1;
       } else {
         b.pendientes += 1;

@@ -13,6 +13,7 @@
 // NUNCA_PIDIO_INFORMES es llamar a quien nunca dio sus datos.
 const prisma = require("./prisma");
 const { getParametros } = require("./parametros");
+const { LEAD_STATUSES_CERRADOS_SIN_VENTA } = require("./leadStatus");
 
 // Los motivos que pueden volver a la cola.
 // Los que vale la pena reintentar semanas despues. SIN_DINERO entra
@@ -40,7 +41,11 @@ function dondeReactivable(tenantId, { motivos, desde, hasta, antesDe, busqueda }
 
   const where = {
     tenantId,
-    status: "DESCARTADO",
+    // Los dos cierres sin venta son reactivables. NO_CONCRETADO es,
+    // ademas, el caso mas claro: el lead era legitimo y solo se le acabo
+    // el tiempo, asi que es justo el que vale la pena volver a intentar
+    // pasado el plazo de enfriamiento.
+    status: { in: LEAD_STATUSES_CERRADOS_SIN_VENTA },
   };
 
   // Buscar un lead concreto -- por telefono, folio o nombre -- no filtra
@@ -79,7 +84,7 @@ async function reactivar({ tenantId, ids, motivo, porNombre }) {
 
   const ahora = new Date();
   const { count } = await prisma.lead.updateMany({
-    where: { id: { in: ids }, tenantId, status: "DESCARTADO" },
+    where: { id: { in: ids }, tenantId, status: { in: LEAD_STATUSES_CERRADOS_SIN_VENTA } },
     data: {
       status: "NUEVO",
       vendedorId: null,
@@ -91,6 +96,13 @@ async function reactivar({ tenantId, ids, motivo, porNombre }) {
       motivoDescarteNota: null,
       descartadoAt: null,
       descartadoPorId: null,
+      // La marca de atraso tambien se limpia: pertenecia al plazo anterior,
+      // y arrastrarla haria que el lead naciera "atrasado" el mismo dia en
+      // que vuelve a la cola.
+      seguimientoIncompleto: false,
+      seguimientoIncompletoAt: null,
+      intentosEsperados: null,
+      intentosRealizados: null,
       // Empieza de cero para el protocolo de reintento.
       reintentosDesde: ahora,
       // Y sin espera: se puede repartir en cuanto el coordinador lo vea.

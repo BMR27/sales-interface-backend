@@ -55,6 +55,7 @@ const { startPurgaGrabacionesJob } = require("./jobs/purgaGrabaciones");
 const { startReactivarDescartadosJob } = require("./jobs/reactivarDescartados");
 const { startCierrePorPlazoJob } = require("./jobs/cierrePorPlazo");
 const { startAlertaReagendasJob } = require("./jobs/alertaReagendas");
+const { startResultadosPendientesJob } = require("./jobs/resultadosPendientes");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -184,4 +185,7 @@ app.listen(PORT, () => {
   startReactivarDescartadosJob();
   startCierrePorPlazoJob();
   startAlertaReagendasJob();
+  // Red de seguridad del protocolo: tipifica las llamadas sin contestar que
+  // nadie alcanzo a clasificar en el modal de resultado.
+  startResultadosPendientesJob();
 });
