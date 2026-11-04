@@ -95,6 +95,7 @@ model Tenant {
   incomingLeads  IncomingLead[]
   llamadas       Llamada[]
   productos      Producto[]
+  productoAlias  ProductoAlias[]
   movimientos    MovimientoInventario[]
   appSettings    AppSetting[]
   leadItems      LeadItem[]
@@ -829,9 +830,34 @@ model Producto {
   leads       Lead[]
   movimientos MovimientoInventario[]
   leadItems   LeadItem[]
+  alias       ProductoAlias[]
 
   @@unique([tenantId, sku])
   @@map("productos")
+}
+
+// Los nombres con que los proveedores mandan este producto. El proveedor
+// dice "Prosta Vital Men" donde el catalogo dice "Vital Men Balance": son
+// dos nombres comerciales de la misma cosa y no hay forma de deducir uno
+// del otro, asi que se registran.
+model ProductoAlias {
+  id    Int    @id @default(autoincrement())
+  alias String
+  // El alias normalizado (sin acentos, un solo espacio, minusculas), para
+  // que buscarlo sea una igualdad indexada.
+  aliasNorm String
+  createdAt DateTime @default(now())
+
+  productoId Int
+  producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  // Un mismo nombre de proveedor no puede apuntar a dos productos.
+  @@unique([tenantId, aliasNorm])
+  @@index([productoId])
+  @@map("producto_alias")
 }
 
 model LeadItem {
