@@ -14,6 +14,7 @@ const {
   parseResultado,
 } = require("../lib/resultadosLlamada");
 const { registrarResultadoLlamada, programarRellamada } = require("../lib/cicloLead");
+const { resolverProducto } = require("../lib/catalogoProducto");
 
 // Quien puede abrir y trabajar un lead desde el panel de llamada.
 //
@@ -89,7 +90,37 @@ router.get("/:id", authMiddleware, async (req, res) => {
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
 
-    const producto = lead.productoCatalogo;
+    // Enlace tardío con el catálogo.
+    //
+    // Arreglar la creación del lead (ver src/lib/catalogoProducto.js) sólo
+    // sirve para los que entren DESPUÉS. Todos los que ya estaban en la
+    // base nacieron con `productoId` null porque el enlace se intentaba
+    // sólo por SKU, y seguirían abriendo el panel en blanco -- sin speech,
+    // sin precio y sin promociones -- hasta que alguien corriera un script.
+    //
+    // Así que se resuelve aquí, la primera vez que alguien abre la llamada,
+    // y se GUARDA: el lead queda enlazado para siempre y la reparación no
+    // depende de que nadie se acuerde de ejecutar nada. Si no hay
+    // coincidencia no pasa nada y el panel avisa, que es el caso honesto.
+    let producto = lead.productoCatalogo;
+    if (!producto && lead.producto) {
+      const resuelto = await resolverProducto({
+        tenantId: req.user.tenantId,
+        internalSku: lead.internalSku,
+        externalSku: lead.externalSku,
+        nombre: lead.producto,
+      });
+      if (resuelto) {
+        producto = resuelto;
+        // Sin await: el panel no tiene por qué esperar a que se guarde el
+        // enlace, y si el guardado falla se reintenta en la próxima
+        // apertura. Lo que importa es que esta llamada ya tenga sus datos.
+        prisma.lead
+          .update({ where: { id: lead.id }, data: { productoId: resuelto.id } })
+          .catch((err) => console.error("no se pudo enlazar el lead al catalogo", lead.id, err));
+      }
+    }
+
     const promociones = producto?.ofertasTiers || [];
 
     const productos = await prisma.producto.findMany({
