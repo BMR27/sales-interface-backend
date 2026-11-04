@@ -29,6 +29,7 @@ const { dondeRepartible, dondeEnEspera } = require("../lib/colaLeads");
 const { cronologiaDeLead } = require("../lib/cronologiaLead");
 const { emitir } = require("../lib/eventos");
 const { DIAS, validarRango, horariosDe } = require("../lib/horariosVendedora");
+const { registrarAsignacion } = require("../lib/cicloLead");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -375,12 +376,46 @@ router.put("/leads/:id/reassign", async (req, res) => {
     const existing = await prisma.lead.findFirst({ where: { id: parseInt(req.params.id), tenantId } });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
 
-    const lead = await prisma.lead.update({
-      where: { id: existing.id },
-      // asignadoAt: la reasignacion es trabajo del dia en que se hace, no
-      // del dia en que el lead entro (ver el reporte de Progreso).
-      data: { vendedorId, asignadoAt: new Date() },
-      include: { vendedor: { select: { id: true, nombre: true } } },
+    const anterior = existing.vendedorId
+      ? await prisma.user.findUnique({ where: { id: existing.vendedorId }, select: { id: true, nombre: true } })
+      : null;
+
+    // El lead y su bitacora se escriben juntos. El documento lo pide para
+    // CADA reasignacion, no solo para las de la coordinadora: "debe
+    // registrar el usuario que la realizo, la vendedora anterior y la nueva,
+    // y la fecha/hora". Esta ruta movia el lead sin dejar rastro, asi que
+    // una reasignacion hecha desde el panel del admin desaparecia del
+    // historial que la coordinadora consulta para decidir el siguiente
+    // reparto.
+    const lead = await prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.update({
+        where: { id: existing.id },
+        // asignadoAt: la reasignacion es trabajo del dia en que se hace, no
+        // del dia en que el lead entro (ver el reporte de Progreso).
+        data: { vendedorId, asignadoAt: new Date() },
+        include: { vendedor: { select: { id: true, nombre: true } } },
+      });
+
+      await registrarAsignacion(tx, {
+        leadId: lead.id,
+        tenantId,
+        actor: { id: req.user.id, nombre: req.user.nombre },
+        anterior,
+        nuevo: { id: vendedor.id, nombre: vendedor.nombre },
+        evento: existing.vendedorId ? "reasignada" : "asignada",
+        // El administrador puede repartir un lead que todavia cumple su
+        // espera: es la salida de emergencia del protocolo. Queda anotado
+        // para que se pueda ver que fue una excepcion y no un reparto
+        // normal.
+        motivo:
+          existing.disponibleDesde && existing.disponibleDesde > new Date()
+            ? "Reasignación del administrador, saltando la espera del protocolo"
+            : null,
+        leadAntes: existing,
+        leadDespues: lead,
+      });
+
+      return lead;
     });
 
     emitir(req.user.tenantId, "lead.reasignado", { leadId: lead.id });

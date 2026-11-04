@@ -177,19 +177,36 @@ router.put("/:id", authMiddleware, async (req, res) => {
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
 
     const {
-      nombre, telefono, producto, cantidad, hora, status, folio, monto, categoria, notas,
+      nombre, telefono, producto, cantidad, hora, folio, monto, categoria, notas,
       solicitudEspecial,
       shippingStreet, shippingNumber, shippingReferences, zipCode, state, colonia, municipio, lat, lng,
     } = req.body;
 
-    if (status != null && !parseLeadStatus(status)) {
-      return res.status(400).json({ error: `status inválido. Valores: ${LEAD_STATUSES.join(", ")}` });
-    }
-
+    // `status` ya NO se lee del body, y es el agujero más grande que tenía
+    // este rediseño: esta ruta lo escribía tal cual se lo mandaran, así que
+    // bastaba un PUT con {"status":"DESCARTADO"} -- o "VENTA" -- para
+    // saltarse el protocolo entero. Sin motivo, sin intento registrado, sin
+    // bitácora y sin pasar por ninguna de las validaciones de
+    // src/lib/cicloLead.js.
+    //
+    // El documento lo prohíbe dos veces: "el estatus principal y la
+    // situación operativa deben ser calculados automáticamente, no permitir
+    // su modificación directa por la vendedora" (sección 1) y "no puede
+    // seleccionar directamente Trash ni No concretado" (sección 8).
+    //
+    // El estatus se mueve por donde corresponde:
+    //   venta        POST /api/llamada/:id/confirmar
+    //   resultado    POST /api/llamada/:id/resultado
+    //   rellamada    POST /api/llamada/:id/rellamar
+    //   cierre 72 h  el tick de src/jobs/cierrePorPlazo.js
+    //   rehabilitar  POST /api/coordinador/leads/:id/reactivar
+    //
+    // Ninguna pantalla lo mandaba, así que quitarlo no rompe nada: las
+    // cuatro que llaman a este PUT editan dirección y datos del cliente.
     const lead = await prisma.lead.update({
       where: { id },
       data: {
-        nombre, producto, cantidad, hora, status, folio, monto, categoria, notas,
+        nombre, producto, cantidad, hora, folio, monto, categoria, notas,
         // Peticiones que no caben en ningun catalogo -- un combo especial,
         // por ejemplo. Solo se toca si viene en el body, para que un PUT
         // de direccion no borre lo que la vendedora ya habia anotado.
