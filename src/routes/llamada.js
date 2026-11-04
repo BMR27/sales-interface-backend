@@ -112,6 +112,16 @@ router.get("/:id", authMiddleware, async (req, res) => {
       });
       if (resuelto) {
         producto = resuelto;
+        // El objeto que se devuelve también tiene que llevar el enlace.
+        //
+        // La pantalla NO usa `producto` para dibujar el artículo principal:
+        // usa `lead.productoId` y lo busca en la lista del catálogo
+        // (`mainProductData` en active-call-panel.tsx). Si se resuelve el
+        // producto pero se devuelve el lead tal como se leyó -- con
+        // productoId todavía null -- el speech aparece y el artículo
+        // principal no, que es exactamente el síntoma que esto vino a
+        // arreglar. Son dos lecturas del mismo dato y tienen que coincidir.
+        lead.productoId = resuelto.id;
         // Sin await: el panel no tiene por qué esperar a que se guarde el
         // enlace, y si el guardado falla se reintenta en la próxima
         // apertura. Lo que importa es que esta llamada ya tenga sus datos.
@@ -127,6 +137,22 @@ router.get("/:id", authMiddleware, async (req, res) => {
       where: { activo: true, tenantId: req.user.tenantId },
       orderBy: { nombre: "asc" },
     });
+
+    // El producto del propio lead va en la lista aunque esté dado de baja.
+    //
+    // La pantalla dibuja el artículo principal buscando `lead.productoId`
+    // DENTRO de esta lista. Si el producto se desactivó en el catálogo
+    // -- pasa cuando se descontinúa una presentación mientras todavía hay
+    // leads pendientes de ese producto -- desaparecía de aquí, la búsqueda
+    // fallaba y el panel abría sin artículo principal, acusando al lead de
+    // no estar enlazado cuando sí lo estaba.
+    //
+    // Se puede vender lo que el cliente pidió: lo que no se puede es
+    // ofrecerlo como novedad, y para eso ya está el filtro de arriba en el
+    // resto de la lista.
+    if (producto && !productos.some((p) => p.id === producto.id)) {
+      productos.push(producto);
+    }
 
     res.json({
       // El numero completo no sale del servidor: el marcador manda el id del
