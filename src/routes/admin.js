@@ -30,6 +30,7 @@ const { cronologiaDeLead } = require("../lib/cronologiaLead");
 const { emitir } = require("../lib/eventos");
 const { DIAS, validarRango, horariosDe } = require("../lib/horariosVendedora");
 const { registrarAsignacion } = require("../lib/cicloLead");
+const { resolverProducto } = require("../lib/catalogoProducto");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -188,13 +189,14 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
         continue;
       }
 
-      let productoId = null;
-      if (data.internalSku) {
-        const producto = await prisma.producto.findFirst({
-          where: { sku: String(data.internalSku), tenantId },
-        });
-        productoId = producto?.id ?? null;
-      }
+      // Antes solo por internalSku: una plantilla sin SKU dejaba todos los
+      // leads sin enlazar al catalogo y sin speech en el panel.
+      const productoId =
+        (await resolverProducto({
+          tenantId,
+          internalSku: data.internalSku,
+          nombre: data.producto,
+        }))?.id ?? null;
 
       try {
         const edadNum = Number(data.edad);

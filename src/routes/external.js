@@ -3,6 +3,7 @@ const { apiKeyMiddleware } = require("../middleware/apiKey");
 const { getNextVendedor } = require("../lib/assignment");
 const { getParametros } = require("../lib/parametros");
 const { siguienteFolio } = require("../lib/folios");
+const { resolverProducto } = require("../lib/catalogoProducto");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
 const { crearAviso } = require("../lib/avisos");
 const { detallarMovimiento } = require("../lib/auditoria");
@@ -115,9 +116,18 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       return res.status(201).json({ received: true, folio, leadId: null, assignedTo: null });
     }
 
-    const productoCatalogo = internalSku
-      ? await prisma.producto.findFirst({ where: { sku: internalSku, tenantId } })
-      : null;
+    // El enlace con el catalogo se intentaba SOLO por internalSku, asi que
+    // un lead sin SKU nacia con productoId null aunque su nombre coincidiera
+    // letra por letra con un producto existente -- y la vendedora abria la
+    // llamada con la pantalla vacia: sin speech, sin precio y sin
+    // promociones. Ahora tambien se intenta por SKU externo y por nombre
+    // exacto (ver src/lib/catalogoProducto.js).
+    const productoCatalogo = await resolverProducto({
+      tenantId,
+      internalSku,
+      externalSku,
+      nombre: product,
+    });
 
     // El folio interno se reserva ANTES de crear el lead para que nazca con
     // el: un lead sin folio no se puede referenciar por telefono, que es

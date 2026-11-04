@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const authMiddleware = require("../middleware/auth");
 const { requirePermiso } = require("../lib/permisosCatalog");
 const { siguienteFolio } = require("../lib/folios");
+const { resolverProducto } = require("../lib/catalogoProducto");
 const { MOTIVOS_VIGENTES, parseMotivo, esTrash } = require("../lib/motivosDescarte");
 const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
 const { LEAD_STATUSES, LEAD_STATUSES_ABIERTOS, parseLeadStatus } = require("../lib/leadStatus");
@@ -150,7 +151,13 @@ router.post("/", authMiddleware, async (req, res) => {
         folioPS: await siguienteFolio(req.user.tenantId),
         telefono, producto, cantidad: cantidad || 1, hora, categoria, notas,
         country: country || null, city: city || null, ip: ip || null,
-        productoId: productoId || null,
+        // Si quien da de alta no eligio producto del catalogo, se intenta
+        // resolver por el nombre escrito: sin el enlace, el panel de
+        // llamada no tiene speech ni precio que mostrar.
+        productoId:
+          productoId ||
+          (await resolverProducto({ tenantId: req.user.tenantId, nombre: producto }))?.id ||
+          null,
         vendedorId: req.user.id,
         asignadoAt: new Date(),
         tenantId: req.user.tenantId,
