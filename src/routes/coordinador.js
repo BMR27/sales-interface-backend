@@ -419,17 +419,38 @@ router.post("/leads/asignar", async (req, res) => {
     // vive aquí porque la pantalla ya los muestra en la pestaña "En
     // espera": sin esta validación bastaba seleccionarlos ahí y asignar
     // para saltarse el intervalo que existe para no quemar al cliente.
+    // La espera del protocolo avisa, pero no deja a nadie sin trabajar.
+    //
+    // Esto empezó siendo un bloqueo duro -- el documento dice "impedir
+    // reasignación antes del horario permitido" -- y el resultado fue que
+    // la coordinadora se quedó sin poder repartir: los leads que el
+    // protocolo había devuelto a la cola traían candados de 2, 3 o 4 horas,
+    // así que las vendedoras se quedaron sin nada que marcar. Una regla
+    // pensada para no quemar al cliente terminó parando la operación.
+    //
+    // Así que la espera se respeta por omisión y se puede saltar a
+    // propósito, mandando `forzar`. La diferencia importa: saltársela deja
+    // de ser un descuido y pasa a ser una decisión con nombre y hora en la
+    // bitácora.
     const bloqueados = candidatos.filter((l) => l.disponibleDesde && l.disponibleDesde > ahora);
-    if (bloqueados.length > 0) {
+    if (bloqueados.length > 0 && !req.body?.forzar) {
       const primero = bloqueados[0];
+      const cuando = primero.disponibleDesde.toLocaleString("es-MX", {
+        hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short",
+        timeZone: "America/Mexico_City",
+      });
       return res.status(409).json({
         error:
           bloqueados.length === 1
-            ? `${primero.nombre} todavía está en espera del protocolo: se podrá repartir a partir de las ${primero.disponibleDesde.toLocaleString("es-MX", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short", timeZone: "America/Mexico_City" })}.`
-            : `${bloqueados.length} de los leads seleccionados siguen en espera del protocolo y no se pueden repartir todavía.`,
+            ? `${primero.nombre} está en espera del protocolo hasta las ${cuando}.`
+            : `${bloqueados.length} de los leads seleccionados siguen en espera del protocolo.`,
+        // La pantalla usa esto para ofrecer repartirlo de todas formas:
+        // sin la bandera, el 409 sería un callejón sin salida.
+        sePuedeForzar: true,
         bloqueados: bloqueados.map((l) => ({ id: l.id, nombre: l.nombre, disponibleDesde: l.disponibleDesde })),
       });
     }
+    const forzadoSobreEspera = bloqueados.length > 0;
 
     // Un lead cerrado no es trabajo de nadie: asignarlo le llenaría la
     // lista a la vendedora de leads que no puede llamar.
@@ -461,6 +482,10 @@ router.post("/leads/asignar", async (req, res) => {
           // haya entrado hace tres dias: sin esta marca el reporte de
           // Progreso lo seguiria contando en el dia en que llego.
           asignadoAt: ahora,
+          // El candado se levanta al repartir. Si se quedara puesto, el
+          // lead seguiria contandose como "en espera" ya estando en manos
+          // de una vendedora, y la cola mentiria sobre lo que queda.
+          disponibleDesde: null,
           // Repartirlo es atenderlo: la petición de supervisión queda
           // resuelta y la marca de "revisar disponibilidad" también.
           requiereSupervision: false,
@@ -480,6 +505,12 @@ router.post("/leads/asignar", async (req, res) => {
           anterior: lead.vendedor,
           nuevo: { id: vendedor.id, nombre: vendedor.nombre },
           evento: lead.vendedor ? "reasignada" : "asignada",
+          // Queda escrito cuando se repartio saltandose la espera: es lo
+          // que permite revisar despues si la excepcion se volvio costumbre.
+          motivo:
+            forzadoSobreEspera && lead.disponibleDesde && lead.disponibleDesde > ahora
+              ? "Repartido saltando la espera del protocolo"
+              : null,
           leadAntes: lead,
           // El `updateMany` de arriba no devuelve las filas, así que el
           // "después" se arma con lo que se acaba de escribir. Es el mismo
