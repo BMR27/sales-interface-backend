@@ -14,6 +14,10 @@ const { filtroDisponible } = require("../lib/protocoloLeads");
 const { dondeRepartible, dondeEnEspera } = require("../lib/colaLeads");
 const { describirLeads } = require("../lib/semaforoLead");
 const { emitir } = require("../lib/eventos");
+const { LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
+const { grupoDe, agrupar, esNuevoDeHoy, motivoDeAtraso } = require("../lib/colaCoordinacion");
+const { contextoDeAsignacion, asignacionesDeHoy } = require("../lib/historialAsignaciones");
+const { registrarAsignacion } = require("../lib/cicloLead");
 
 router.use(authMiddleware, coordinacionMiddleware);
 
@@ -132,15 +136,78 @@ router.get("/overview", async (req, res) => {
   }
 });
 
-// GET /api/coordinador/vendedores
+// GET /api/coordinador/vendedores?leadId=
+//
+// Las vendedoras del selector. Con `leadId`, cada una viene con lo que la
+// coordinadora necesita saber ANTES de asignarle ese lead:
+//
+//   "Citlali Díaz — Generó la rellamada"
+//   "Mariana López — Gestionó este lead hoy"
+//   "Daniela Pérez — Sin gestión previa hoy"
+//
+// Son INDICADORES, no bloqueos: el documento es explícito en que ninguna
+// vendedora se elimina del selector y la coordinadora puede elegir a
+// cualquiera de las habilitadas. Lo que cambia es que ahora elige sabiendo.
+// La única exclusión sigue siendo la de siempre: usuarios inactivos.
 router.get("/vendedores", async (req, res) => {
   try {
-    const vendedores = await prisma.user.findMany({
-      where: { rol: "VENDEDOR", activo: true, tenantId: req.user.tenantId },
-      select: { id: true, nombre: true },
-      orderBy: { nombre: "asc" },
+    const leadId = parseInt(req.query.leadId);
+    const tenantId = req.user.tenantId;
+
+    const [vendedores, cargaHoy, lead, contexto] = await Promise.all([
+      prisma.user.findMany({
+        where: { rol: "VENDEDOR", activo: true, tenantId },
+        select: { id: true, nombre: true },
+        orderBy: { nombre: "asc" },
+      }),
+      asignacionesDeHoy(tenantId),
+      Number.isInteger(leadId)
+        ? prisma.lead.findFirst({
+            where: { id: leadId, tenantId },
+            select: { vendedorId: true, reagendaVendedorSugeridoId: true },
+          })
+        : null,
+      Number.isInteger(leadId) ? contextoDeAsignacion([leadId], tenantId) : null,
+    ]);
+
+    const ctx = contexto?.get(leadId) ?? null;
+    const asignadasHoy = new Set((ctx?.asignadasHoy ?? []).map((v) => v.id));
+
+    res.json({
+      vendedores: vendedores.map((v) => {
+        // El orden de las etiquetas es el de su peso al decidir: quien
+        // generó la rellamada ya habló con el cliente, y eso pesa más que
+        // haberlo gestionado hoy.
+        const generoRellamada = lead?.reagendaVendedorSugeridoId === v.id;
+        const laTieneAhora = lead?.vendedorId === v.id;
+        const gestionoHoy = asignadasHoy.has(v.id);
+        const esUltima = ctx?.ultimaVendedora?.id === v.id;
+
+        const nota = !lead
+          ? null
+          : generoRellamada
+            ? "Generó la rellamada"
+            : laTieneAhora
+              ? "Lo tiene asignado ahora"
+              : gestionoHoy
+                ? "Gestionó este lead hoy"
+                : esUltima
+                  ? "Última vendedora que lo atendió"
+                  : "Sin gestión previa hoy";
+
+        return {
+          id: v.id,
+          nombre: v.nombre,
+          nota,
+          generoRellamada,
+          gestionoHoy,
+          esUltima,
+          // Cuántos leads recibió hoy. Responde a algo que la coordinadora
+          // hacía de memoria: repartir parejo.
+          asignacionesHoy: cargaHoy.get(v.id) ?? 0,
+        };
+      }),
     });
-    res.json({ vendedores });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
@@ -148,6 +215,16 @@ router.get("/vendedores", async (req, res) => {
 });
 
 // GET /api/coordinador/leads
+//
+// La cola de trabajo. Devuelve los leads ya clasificados en las secciones
+// del protocolo (pendientes antiguos / nuevos / reintentos / rellamadas /
+// en espera) y, con cada uno, lo que hace falta para decidir a quien
+// darselo sin abrir nada: cuantos intentos lleva, quien lo tuvo, a quien se
+// le dio hoy, cuando se desbloquea y cuanto le queda de vida.
+//
+// Antes era una lista plana ordenada por fecha de entrada. Con 60 leads en
+// pantalla eso no es una cola: es un volcado, y la coordinadora repartia
+// por el orden en que los veia.
 router.get("/leads", async (req, res) => {
   try {
     const { state, productoId, search, asignacion, supervision } = req.query;
@@ -172,6 +249,23 @@ router.get("/leads", async (req, res) => {
       // solo. Esconderlos del todo era peor: parecian haberse perdido.
       where.vendedorId = null;
       where.disponibleDesde = { gt: new Date() };
+    } else if (asignacion === "atrasados") {
+      // La pestaña de control del protocolo: lo que ya debio haberse hecho.
+      // Son dos cosas distintas que se ven juntas porque las dos significan
+      // lo mismo para quien reparte -- esto lleva retraso -- y ninguna de
+      // las dos bloquea el lead.
+      where.vendedorId = null;
+      where.status = { in: LEAD_STATUSES_ABIERTOS };
+      filtros.push({
+        OR: [
+          // Se vencieron las 72 h sin los intentos que tocaban.
+          { seguimientoIncompleto: true },
+          // Paso su ventana de reparto y nadie lo asigno.
+          { disponibleHasta: { lt: new Date() } },
+          // La hora que se le prometio al cliente ya paso.
+          { status: "REAGENDADO", fechaReagenda: { lt: new Date() } },
+        ],
+      });
     } else if (asignacion !== "todos") {
       where.vendedorId = null;
       // Un lead que acaba de rebotar por no contestar sigue en la cola
@@ -197,11 +291,14 @@ router.get("/leads", async (req, res) => {
     }
     if (filtros.length > 0) where.AND = filtros;
 
-    const [leads, sinAsignar, enEspera] = await Promise.all([
+    const [leads, sinAsignar, enEspera, atrasados, params] = await Promise.all([
       prisma.lead.findMany({
         where,
-        // Los que no tienen vendedora van arriba: son los que esperan.
-        orderBy: [{ vendedorId: { sort: "asc", nulls: "first" } }, { createdAt: "desc" }],
+        // El orden fino lo pone src/lib/colaCoordinacion.js, que agrupa por
+        // sección y ordena dentro de cada una. Este `orderBy` solo decide
+        // QUÉ 100 leads se traen cuando hay más: los más antiguos, que son
+        // los que están por perderse.
+        orderBy: [{ vendedorId: { sort: "asc", nulls: "first" } }, { createdAt: "asc" }],
         take: 100,
         include: {
           vendedor: { select: { id: true, nombre: true } },
@@ -217,28 +314,70 @@ router.get("/leads", async (req, res) => {
       }),
       prisma.lead.count({ where: dondeRepartible(req.user.tenantId) }),
       prisma.lead.count({ where: dondeEnEspera(req.user.tenantId) }),
+      // El contador de la pestaña "Atrasados". Se cuenta siempre, se esté
+      // viendo o no: es la alerta que hace que alguien entre a verla.
+      prisma.lead.count({
+        where: {
+          tenantId: req.user.tenantId,
+          vendedorId: null,
+          status: { in: LEAD_STATUSES_ABIERTOS },
+          OR: [
+            { seguimientoIncompleto: true },
+            { disponibleHasta: { lt: new Date() } },
+            { status: "REAGENDADO", fechaReagenda: { lt: new Date() } },
+          ],
+        },
+      }),
+      getParametros(req.user.tenantId),
     ]);
 
     // El semaforo y los relojes salen de src/lib/semaforoLead.js, que es
     // el mismo que usan la pantalla del admin y la de la vendedora: si
     // cada una lo calculara, el mismo lead se pintaria distinto segun
     // quien lo mire.
-    const descripciones = await describirLeads(
-      leads,
-      req.user.tenantId,
-      new Map(leads.map((l) => [l.id, {
-        intentos: l._count.llamadas,
-        ultimaLlamada: l.llamadas[0] ?? null,
-      }]))
+    const intentosPorLead = new Map(
+      leads.map((l) => [l.id, { intentos: l._count.llamadas, ultimaLlamada: l.llamadas[0] ?? null }])
     );
+    const descripciones = await describirLeads(leads, req.user.tenantId, intentosPorLead);
+
+    // Quién tuvo cada lead y a quién se le dio hoy. Una sola consulta para
+    // todo el lote: una por tarjeta convertiría abrir Leads en 120 viajes.
+    const contexto = await contextoDeAsignacion(leads.map((l) => l.id), req.user.tenantId);
+
+    // Un solo instante para todo el lote: calculado por lead, un lote que
+    // tarde en procesarse podría partir el día a la mitad y clasificar dos
+    // leads iguales en secciones distintas.
+    const ahora = new Date();
+    const hoy = diaLocal(ahora);
+
+    const enriquecidos = leads.map((l, i) => {
+      const { _count, llamadas, ...lead } = l;
+      const intentos = _count.llamadas;
+      const ctx = contexto.get(l.id) ?? { ultimaVendedora: null, asignadasHoy: [] };
+
+      return {
+        ...lead,
+        ...descripciones[i],
+        grupo: grupoDe(lead, { intentos, ahora, hoy }),
+        // El distintivo verde. Se calcula en el servidor y no en la
+        // pantalla porque depende del día de la operación (México), y el
+        // navegador de quien mira puede estar en otro huso.
+        esNuevo: esNuevoDeHoy(lead, intentos, hoy),
+        atraso: motivoDeAtraso(lead, { ahora, alertaAtrasoMin: params.alertaAtrasoMin }),
+        ultimaVendedora: ctx.ultimaVendedora,
+        asignadasHoy: ctx.asignadasHoy,
+      };
+    });
 
     res.json({
-      leads: leads.map((l, i) => {
-        const { _count, llamadas, ...lead } = l;
-        return { ...lead, ...descripciones[i] };
-      }),
+      leads: enriquecidos,
+      // Las secciones, en el orden del protocolo. La pantalla las dibuja
+      // tal cual: si decidiera ella el orden, acabaría discrepando del
+      // servidor en cuanto cambie una regla.
+      grupos: agrupar(enriquecidos),
       sinAsignar,
       enEspera,
+      atrasados,
     });
   } catch (err) {
     console.error(err);
@@ -260,25 +399,91 @@ router.post("/leads/asignar", async (req, res) => {
     if (!vendedor) return res.status(404).json({ error: "Vendedor no encontrado" });
 
     const ids = leadIds.map(Number).filter(Number.isInteger);
-    const antes = await prisma.lead.findMany({
+    const candidatos = await prisma.lead.findMany({
       where: { id: { in: ids }, tenantId: req.user.tenantId },
-      select: { id: true, nombre: true, vendedor: { select: { id: true, nombre: true } } },
-    });
-    if (antes.length === 0) return res.status(404).json({ error: "No se encontraron esos leads" });
-
-    const result = await prisma.lead.updateMany({
-      where: { id: { in: antes.map((l) => l.id) }, tenantId: req.user.tenantId },
-      // Queda registrado quien repartio: es a esa coordinadora a la que se
-      // le acredita la comision por la venta que salga del lead.
-      data: {
-        vendedorId: vendedor.id,
-        asignadoPorCoordinador: true,
-        asignadoPorId: req.user.id,
-        // El reparto es lo que vuelve a este lead trabajo de hoy, aunque
-        // haya entrado hace tres dias: sin esta marca el reporte de
-        // Progreso lo seguiria contando en el dia en que llego.
-        asignadoAt: new Date(),
+      select: {
+        id: true,
+        nombre: true,
+        status: true,
+        disponibleDesde: true,
+        vendedor: { select: { id: true, nombre: true } },
       },
+    });
+    if (candidatos.length === 0) return res.status(404).json({ error: "No se encontraron esos leads" });
+
+    const ahora = new Date();
+
+    // El candado del protocolo: un lead que acaba de rebotar no se puede
+    // repartir hasta que pase su espera. El documento lo pide expresamente
+    // ("impedir reasignación antes del horario permitido"), y la guarda
+    // vive aquí porque la pantalla ya los muestra en la pestaña "En
+    // espera": sin esta validación bastaba seleccionarlos ahí y asignar
+    // para saltarse el intervalo que existe para no quemar al cliente.
+    const bloqueados = candidatos.filter((l) => l.disponibleDesde && l.disponibleDesde > ahora);
+    if (bloqueados.length > 0) {
+      const primero = bloqueados[0];
+      return res.status(409).json({
+        error:
+          bloqueados.length === 1
+            ? `${primero.nombre} todavía está en espera del protocolo: se podrá repartir a partir de las ${primero.disponibleDesde.toLocaleString("es-MX", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short", timeZone: "America/Mexico_City" })}.`
+            : `${bloqueados.length} de los leads seleccionados siguen en espera del protocolo y no se pueden repartir todavía.`,
+        bloqueados: bloqueados.map((l) => ({ id: l.id, nombre: l.nombre, disponibleDesde: l.disponibleDesde })),
+      });
+    }
+
+    // Un lead cerrado no es trabajo de nadie: asignarlo le llenaría la
+    // lista a la vendedora de leads que no puede llamar.
+    const cerrados = candidatos.filter((l) => !LEAD_STATUSES_ABIERTOS.includes(l.status));
+    if (cerrados.length > 0) {
+      return res.status(409).json({
+        error:
+          cerrados.length === 1
+            ? `${cerrados[0].nombre} ya está cerrado. Si fue un error, regrésalo a la cola primero.`
+            : `${cerrados.length} de los leads seleccionados ya están cerrados.`,
+      });
+    }
+
+    const antes = candidatos;
+
+    // El lead y su bitácora se escriben juntos: una reasignación sin
+    // registro no se puede auditar, y es justo el dato con el que la
+    // coordinadora decide el siguiente reparto.
+    const result = await prisma.$transaction(async (tx) => {
+      const result = await tx.lead.updateMany({
+        where: { id: { in: antes.map((l) => l.id) }, tenantId: req.user.tenantId },
+        // Queda registrado quien repartio: es a esa coordinadora a la que se
+        // le acredita la comision por la venta que salga del lead.
+        data: {
+          vendedorId: vendedor.id,
+          asignadoPorCoordinador: true,
+          asignadoPorId: req.user.id,
+          // El reparto es lo que vuelve a este lead trabajo de hoy, aunque
+          // haya entrado hace tres dias: sin esta marca el reporte de
+          // Progreso lo seguiria contando en el dia en que llego.
+          asignadoAt: ahora,
+          // Repartirlo es atenderlo: la petición de supervisión queda
+          // resuelta y la marca de "revisar disponibilidad" también.
+          requiereSupervision: false,
+          requiereRevisionHorario: false,
+          // La ventana de reparto se cierra al repartir. Si se quedara
+          // vencida, el lead seguiría marcado como atrasado ya en manos de
+          // una vendedora.
+          disponibleHasta: null,
+        },
+      });
+
+      for (const lead of antes) {
+        await registrarAsignacion(tx, {
+          leadId: lead.id,
+          tenantId: req.user.tenantId,
+          actor: { id: req.user.id, nombre: req.user.nombre },
+          anterior: lead.vendedor,
+          nuevo: { id: vendedor.id, nombre: vendedor.nombre },
+          evento: lead.vendedor ? "reasignada" : "asignada",
+        });
+      }
+
+      return result;
     });
 
     // El kardex necesita saber a quien se le quito el lead, no solo a quien
