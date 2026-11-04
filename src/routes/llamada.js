@@ -1,8 +1,19 @@
 const express = require("express");
 const authMiddleware = require("../middleware/auth");
-const { requirePermiso } = require("../lib/permisosCatalog");
+const { requirePermiso, tienePermiso } = require("../lib/permisosCatalog");
 const { registrarResultado } = require("../lib/historialLlamadas");
 const { ocultarTelefonoLead } = require("../lib/telefono");
+const { getParametros } = require("../lib/parametros");
+const { detallarMovimiento } = require("../lib/auditoria");
+const { motivoLabel } = require("../lib/motivosDescarte");
+const {
+  RESULTADOS,
+  SUBMOTIVOS_RECHAZO_COMPRA,
+  SUBMOTIVO_REQUIERE_NOTA,
+  EFECTO_TRASH,
+  parseResultado,
+} = require("../lib/resultadosLlamada");
+const { registrarResultadoLlamada, programarRellamada } = require("../lib/cicloLead");
 
 // Quien puede abrir y trabajar un lead desde el panel de llamada.
 //
@@ -18,6 +29,53 @@ const { filtroLead } = require("../lib/accesoLead");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
+
+// GET /api/llamada/resultados — el catálogo del modal "Resultado de
+// llamada", para que la pantalla lo dibuje sin tenerlo duplicado del lado
+// del navegador. Duplicarlo garantizaba que tarde o temprano el modal
+// ofreciera una opción que el servidor ya no acepta.
+//
+// Va ANTES de GET /:id: Express casa por orden de declaración, y declarada
+// después caería en el comodín del id.
+router.get("/resultados", authMiddleware, async (req, res) => {
+  try {
+    const { rellamarMaxDias, esperaNoContestaMin, esperaRechazaMin, esperaFueraServicioMin } =
+      await getParametros(req.user.tenantId);
+
+    // Las esperas se mandan ya resueltas para que el modal pueda decir
+    // "vuelve en 2 h" con el valor real de la empresa y no uno fijo en el
+    // código, que es como se desincroniza una advertencia.
+    const ESPERA = {
+      NO_CONTESTA: esperaNoContestaMin,
+      RECHAZA: esperaRechazaMin,
+      FUERA_DE_SERVICIO: esperaFueraServicioMin,
+    };
+
+    res.json({
+      resultados: RESULTADOS.map((r) => ({
+        clave: r.clave,
+        label: r.label,
+        ayuda: r.ayuda,
+        efecto: r.efecto,
+        icono: r.icono,
+        requiereSubmotivo: Boolean(r.requiereSubmotivo),
+        requiereConfirmacion: Boolean(r.requiereConfirmacion),
+        esperaMinutos: r.desenlace ? ESPERA[r.desenlace] ?? null : null,
+      })),
+      // Los motivos de "Cliente rechaza compra", con la etiqueta del
+      // catálogo de descarte: son las mismas claves, no una lista aparte.
+      submotivos: SUBMOTIVOS_RECHAZO_COMPRA.map((clave) => ({
+        clave,
+        label: motivoLabel(clave),
+        requiereNota: clave === SUBMOTIVO_REQUIERE_NOTA,
+      })),
+      rellamarMaxDias,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
 
 // GET /api/llamada/:id — info del lead para la llamada
 router.get("/:id", authMiddleware, async (req, res) => {
@@ -161,45 +219,137 @@ router.post("/:id/confirmar", authMiddleware, requirePermiso("vendedor.leads.con
   }
 });
 
-// POST /api/llamada/:id/reagendar — reagenda el lead para una fecha futura
-router.post("/:id/reagendar", authMiddleware, requirePermiso("vendedor.leads.reagendar"), async (req, res) => {
+// POST /api/llamada/:id/resultado — la vendedora registra qué pasó.
+//
+// Sustituye a DELETE /api/leads/:id (descartar), POST /:id/devolver y
+// POST /:id/supervision. Ella dice lo que vio; el estatus, la cola y los
+// tiempos los deriva src/lib/cicloLead.js. No recibe ningún estatus: el
+// documento es explícito en que la vendedora no elige si el lead queda en
+// Trash o No concretado, y permitírselo fue lo que produjo los descartes
+// prematuros que este cambio corrige.
+router.post("/:id/resultado", authMiddleware, async (req, res) => {
   try {
     const leadId = parseInt(req.params.id);
-    const { fecha, notas } = req.body;
+    const { resultado, submotivo, nota, duplicadoDe, token } = req.body ?? {};
 
-    const lead = await prisma.lead.findFirst({
+    // El acceso se valida con el mismo filtro de siempre ANTES de tocar
+    // nada: la vendedora solo sus leads, la coordinadora los de su empresa.
+    const permitido = await prisma.lead.findFirst({
       where: filtroLead(req.user, leadId),
+      select: { id: true },
+    });
+    if (!permitido) return res.status(404).json({ error: "Lead no encontrado" });
+
+    // Los permisos que ya existían siguen mandando, repartidos según lo que
+    // el resultado provoca: cerrar un lead es "descartar" y devolverlo a la
+    // cola es "devolver". Sin esto, el botón nuevo habría sido una puerta
+    // trasera a dos acciones que la empresa puede tener apagadas.
+    const def = parseResultado(resultado);
+    if (def) {
+      const clave = def.efecto === EFECTO_TRASH ? "vendedor.leads.rechazar" : "vendedor.leads.devolver";
+      if (!(await tienePermiso(req.user, clave))) {
+        return res.status(403).json({ error: "No tienes permiso para realizar esta acción" });
+      }
+    }
+
+    const salida = await registrarResultadoLlamada({
+      leadId,
+      tenantId: req.user.tenantId,
+      usuario: { id: req.user.id, nombre: req.user.nombre },
+      resultado,
+      submotivo,
+      nota,
+      duplicadoDe,
+      token,
+    });
+
+    if (salida?.error) return res.status(salida.status ?? 400).json({ error: salida.error });
+
+    detallarMovimiento(req, {
+      entidad: "Lead",
+      entidadId: leadId,
+      descripcion: `Registró "${def?.label ?? resultado}" en el lead ${salida.lead?.nombre ?? leadId}`,
+      despues: { status: salida.lead?.status, substatus: salida.lead?.substatus },
+    });
+
+    res.json(salida);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/llamada/:id/rellamada — la rellamada vigente, si la hay.
+//
+// El modal la precarga en vez de crear una segunda: el documento pide
+// impedir dos rellamadas activas para el mismo lead, y la forma de
+// impedirlo que no pierde trabajo es que la segunda vez se edite la misma.
+router.get("/:id/rellamada", authMiddleware, async (req, res) => {
+  try {
+    const lead = await prisma.lead.findFirst({
+      where: filtroLead(req.user, parseInt(req.params.id)),
+      select: {
+        fechaReagenda: true,
+        status: true,
+        supervisionNota: true,
+        reagendaVendedorSugerido: { select: { id: true, nombre: true } },
+      },
     });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
-    if (lead.status === "VENTA") {
-      return res.status(409).json({ error: "Este lead ya tiene una venta cerrada" });
-    }
 
-    if (!fecha) return res.status(400).json({ error: "Fecha requerida" });
-    const fechaReagenda = new Date(fecha);
-    if (Number.isNaN(fechaReagenda.getTime())) {
-      return res.status(400).json({ error: "Fecha inválida" });
-    }
-    if (fechaReagenda.getTime() < Date.now()) {
-      return res.status(400).json({ error: "La fecha de reagenda debe ser futura" });
-    }
+    const vigente = lead.status === "REAGENDADO" && lead.fechaReagenda && lead.fechaReagenda > new Date();
 
-    await registrarResultado({
+    res.json({
+      rellamada: vigente
+        ? {
+            fecha: lead.fechaReagenda,
+            nota: lead.supervisionNota,
+            generadaPor: lead.reagendaVendedorSugerido,
+          }
+        : null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/llamada/:id/rellamar — el cliente pidió que le llamen en otro
+// momento. Sustituye a POST /:id/reagendar y a POST /api/leads/:id/supervision:
+// eran dos botones para el mismo hecho, y cuál usar dependía de que la
+// vendedora supiera de memoria si la hora caía en su turno.
+router.post("/:id/rellamar", authMiddleware, requirePermiso("vendedor.leads.reagendar"), async (req, res) => {
+  try {
+    const leadId = parseInt(req.params.id);
+    const { fecha, nota, token } = req.body ?? {};
+
+    const permitido = await prisma.lead.findFirst({
+      where: filtroLead(req.user, leadId),
+      select: { id: true },
+    });
+    if (!permitido) return res.status(404).json({ error: "Lead no encontrado" });
+
+    const salida = await programarRellamada({
       leadId,
-      vendedorId: req.user.id,
       tenantId: req.user.tenantId,
-      resultado: "REAGENDADO",
-      notas,
-      estadoAntes: lead.status,
-      estadoDespues: "REAGENDADO",
+      usuario: { id: req.user.id, nombre: req.user.nombre },
+      fecha,
+      nota,
+      token,
     });
 
-    await prisma.lead.update({
-      where: { id: leadId },
-      data: { status: "REAGENDADO", fechaReagenda },
+    if (salida?.error) {
+      return res.status(salida.status ?? 400).json({ error: salida.error, limite: salida.limite });
+    }
+
+    detallarMovimiento(req, {
+      entidad: "Lead",
+      entidadId: leadId,
+      descripcion: `Agendó una rellamada del lead ${salida.lead?.nombre ?? leadId}`,
+      despues: { fechaReagenda: salida.fechaReagenda, accion: salida.accion },
     });
 
-    res.json({ message: "Llamada reagendada", leadId, fechaReagenda });
+    res.json(salida);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

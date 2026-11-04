@@ -53,6 +53,21 @@ async function getPermisosEfectivos(tenantId, rol) {
   return permisos;
 }
 
+// ¿Este usuario puede hacer esto?
+//
+// La misma regla que `requirePermiso`, pero como pregunta en vez de como
+// middleware: el modal de "Resultado de llamada" es un solo endpoint que
+// exige un permiso distinto segun lo que la vendedora haya elegido
+// (cerrar el lead es "descartar", devolverlo a la cola es "devolver"), y
+// eso no se puede decidir antes de leer el body.
+//
+// Mismo default-allow: sin tenant, o sin fila que lo apague, se permite.
+async function tienePermiso(user, clave) {
+  if (!user?.tenantId) return true;
+  const permisos = await getPermisosEfectivos(user.tenantId, user.rol);
+  return !(clave in permisos) || permisos[clave] !== false;
+}
+
 // Middleware para proteger una accion puntual con una clave de permiso.
 // Deja pasar si el usuario no tiene tenant (p.ej. SUPER_ADMIN) o si la
 // clave esta activa; responde 403 si esta desactivada explicitamente.
@@ -77,5 +92,6 @@ module.exports = {
   ROLES_CONFIGURABLES,
   clavesValidas,
   getPermisosEfectivos,
+  tienePermiso,
   requirePermiso,
 };

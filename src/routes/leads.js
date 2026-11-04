@@ -274,8 +274,26 @@ router.get("/:id/historial", authMiddleware, async (req, res) => {
 });
 
 // DELETE /api/leads/:id (descarta)
+//
+// Descarte directo, con el motivo que el que llama elija. Lo conserva la
+// coordinadora y el administrador, que a veces tienen que cerrar un lead
+// sin haberlo llamado (un duplicado detectado al repartir, por ejemplo).
+//
+// La VENDEDORA ya no entra por aquí, y la guarda está en el servidor y no
+// solo en la pantalla porque el documento lo pide expresamente: "No puede
+// seleccionar directamente Trash ni No concretado". Ella registra el
+// resultado real de la llamada en POST /api/llamada/:id/resultado y el
+// sistema deriva el estatus. Permitirle elegir la consecuencia fue lo que
+// produjo los descartes prematuros -- leads cerrados sin una sola llamada
+// registrada -- que este cambio corrige.
 router.delete("/:id", authMiddleware, requirePermiso("vendedor.leads.rechazar"), async (req, res) => {
   try {
+    if (req.user.rol === "VENDEDOR") {
+      return res.status(403).json({
+        error:
+          "Registra el resultado de la llamada: el sistema decide si el lead se cierra o vuelve a la cola.",
+      });
+    }
     const id = parseInt(req.params.id);
     // El motivo es del catalogo cerrado, no texto libre: de aqui sale el
     // porcentaje de calidad de la base y para medir hace falta un conjunto
