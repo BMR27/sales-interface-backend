@@ -20,9 +20,6 @@
 // minutos fijos entre uno y otro) sin importar como habia terminado la
 // llamada ni cuanto llevaba el lead en la cola.
 const prisma = require("./prisma");
-const { getParametros } = require("./parametros");
-const { LEAD_STATUSES_ABIERTOS } = require("./leadStatus");
-const { emitir } = require("./eventos");
 const { siguienteInicioHabil } = require("./horariosVendedora");
 
 // Desde cuando aplica el descarte automatico por agotar el plazo.
@@ -44,11 +41,6 @@ const { siguienteInicioHabil } = require("./horariosVendedora");
 // no hace el sistema es cerrarlos solo. Las esperas entre intentos si
 // aplican a todos: esas no destruyen nada.
 const PROTOCOLO_DESDE = new Date("2026-11-01T00:00:00-06:00");
-
-// Un lead entra al cierre automatico solo si nacio despues del corte.
-function entraAlProtocolo(lead) {
-  return !!lead.createdAt && lead.createdAt >= PROTOCOLO_DESDE;
-}
 
 // Como termino el intento, en los terminos del protocolo.
 //
@@ -94,106 +86,24 @@ function clasificarDesenlace(desenlaceTwilio) {
   return DESENLACES.NO_CONTESTA;
 }
 
-// Se ejecuta al terminar una llamada que nadie contesto. Nunca lanza: va
-// colgado del webhook de Twilio, y un fallo aqui no puede tumbar el aviso
-// de fin de llamada ni dejar la llamada a medias.
-async function aplicarProtocoloNoContesto({ leadId, tenantId, desenlaceTwilio }) {
-  try {
-    if (!leadId || !tenantId) return null;
-
-    const params = await getParametros(tenantId);
-    if (!params.reintentoAutomatico) return null;
-
-    const lead = await prisma.lead.findFirst({
-      where: { id: leadId, tenantId },
-      select: {
-        id: true, status: true, vendedorId: true, createdAt: true,
-        reintentosDesde: true, primeraLlamadaAt: true,
-      },
-    });
-    // Un lead ya cerrado -- vendido o descartado -- no es trabajo de nadie.
-    if (!lead || !LEAD_STATUSES_ABIERTOS.includes(lead.status)) return null;
-
-    // Un lead reactivado empieza de cero: si contaramos desde su primera
-    // llamada historica, ya habria agotado las 72 horas y se descartaria
-    // en el primer intento.
-    const inicioDelPlazo = lead.reintentosDesde ?? lead.primeraLlamadaAt ?? new Date();
-
-    const contestadas = await prisma.llamada.count({
-      where: {
-        leadId, tenantId, contestada: true,
-        ...(lead.reintentosDesde ? { fecha: { gte: lead.reintentosDesde } } : {}),
-      },
-    });
-    // Si alguna vez contesto, el numero servia y la conversacion existio:
-    // este protocolo no aplica. Lo que siga lo decide quien lo atienda.
-    if (contestadas > 0) return null;
-
-    const desenlace = clasificarDesenlace(desenlaceTwilio);
-    const ahora = new Date();
-    const vencePlazo = new Date(inicioDelPlazo.getTime() + params.horasParaTrash * 3600000);
-
-    if (ahora >= vencePlazo && entraAlProtocolo(lead)) {
-      await descartarPorPlazo(lead.id, desenlace);
-      emitir(tenantId, "lead.descartado", { leadId, motivo: desenlace.motivoTrash });
-      return { accion: "descartado", desenlace: desenlace.clave, motivo: desenlace.motivoTrash };
-    }
-
-    const esperaMin = params[desenlace.esperaParam];
-    const disponibleDesde = new Date(ahora.getTime() + esperaMin * 60000);
-    const disponibleHasta = new Date(
-      disponibleDesde.getTime() + params.ventanaReasignacionMin * 60000
-    );
-
-    await prisma.lead.update({
-      where: { id: leadId },
-      data: {
-        vendedorId: null,
-        asignadoAt: null,
-        asignadoPorCoordinador: false,
-        disponibleDesde,
-        disponibleHasta,
-        ultimoDesenlace: desenlace.clave,
-        // El reloj de las 72 horas arranca con el primer intento y no se
-        // vuelve a tocar.
-        ...(lead.primeraLlamadaAt ? {} : { primeraLlamadaAt: ahora }),
-        devueltoAt: ahora,
-        devueltoMotivo: etiquetaDeEspera(desenlace, esperaMin),
-        devueltoPorNombre: "Protocolo automatico",
-      },
-    });
-
-    // La vendedora que acaba de marcar tiene la pantalla abierta con este
-    // lead y un boton de llamar que ya no va a funcionar: el lead dejo de
-    // ser suyo en este mismo instante. El aviso hace que su lista se
-    // actualice sola en vez de dejarla descubrirlo al siguiente intento.
-    emitir(tenantId, "lead.devuelto", {
-      leadId,
-      vendedorId: lead.vendedorId,
-      motivo: desenlace.clave,
-      disponibleDesde,
-    });
-
-    return {
-      accion: "reencolado",
-      desenlace: desenlace.clave,
-      esperaMinutos: esperaMin,
-      disponibleDesde,
-      disponibleHasta,
-      vencePlazo,
-    };
-  } catch (err) {
-    console.error("no se pudo aplicar el protocolo de no contesto", leadId, err);
-    return null;
-  }
-}
-
-function etiquetaDeEspera(desenlace, esperaMin) {
-  const horas = Math.round((esperaMin / 60) * 10) / 10;
-  if (desenlace.clave === "RECHAZA") return `Rechazó la llamada, vuelve en ${horas} h`;
-  if (desenlace.clave === "FUERA_DE_SERVICIO") return `Número fuera de servicio, vuelve en ${horas} h`;
-  return `No contestó, vuelve en ${horas} h`;
-}
+// Aqui vivia `aplicarProtocoloNoContesto`, que movia el lead desde el
+// webhook de Twilio en cuanto la llamada terminaba sin respuesta.
+//
+// Se retiro, no se desactivo. Hacia dos cosas que el protocolo nuevo ya no
+// admite: clasificaba el desenlace a partir del codigo de Twilio -- que no
+// distingue "el cliente colgo" de "el telefono comunicaba" -- y cerraba el
+// lead al vencer las 72 horas sin comprobar que se hubieran hecho los
+// intentos que tocaban.
+//
+// Dejarlo como codigo muerto era peor que borrarlo: es una segunda puerta
+// al mismo cambio de estatus, sin transaccion, sin bitacora de asignaciones
+// y sin la validacion de evidencia. Quien la reconectara por descuido
+// volveria a producir los descartes prematuros que este rediseño corrige.
+//
+// Lo que hace ahora lo mismo, con todas las reglas en un solo lugar:
+//   src/lib/cicloLead.js          la vendedora registra el resultado
+//   src/jobs/resultadosPendientes.js  la red para quien no lo registra
+//   src/jobs/cierrePorPlazo.js    el cierre de las 72 horas, con evidencia
 
 // El cierre de las 72 horas.
 //
@@ -227,10 +137,6 @@ async function cerrarPorProtocolo(leadId, desenlace, { intentosEsperados, intent
     },
   });
 }
-
-// Nombre anterior, conservado porque lo importan el job de cierre y los
-// scripts de mantenimiento. Apunta al mismo cierre.
-const descartarPorPlazo = cerrarPorProtocolo;
 
 // ¿Se hicieron los intentos que tocaban?
 //
@@ -307,11 +213,7 @@ function filtroVentanaVencida() {
 
 module.exports = {
   PROTOCOLO_DESDE,
-  entraAlProtocolo,
-  aplicarProtocoloNoContesto,
   filtroDisponible,
-  filtroVentanaVencida,
-  descartarPorPlazo,
   cerrarPorProtocolo,
   evaluarSeguimiento,
   clasificarDesenlace,
