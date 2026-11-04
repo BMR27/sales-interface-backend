@@ -16,6 +16,7 @@
 // voz alta: la precision es la del dato de Twilio. Un numero apagado y uno
 // inexistente a veces reportan lo mismo.
 
+const prisma = require("./prisma");
 const { getParametros } = require("./parametros");
 const { diaLocal, horaLocal } = require("./fechasLocales");
 const { esTrash, POR_CLAVE, MOTIVOS } = require("./motivosDescarte");
@@ -264,6 +265,39 @@ async function umbralDeIntentos(tenantId) {
   return params.calidadIntentosNoContesto;
 }
 
+// Cuantos nombres hubo que corregir.
+//
+// Es una medida de calidad distinta a las de arriba, y mas directa: las
+// otras miden si el lead servia, esta mide si el dato venia bien escrito.
+// Los leads de CF llegan de un formulario web sin validar ("Evaristo.cruz",
+// apellidos en el campo del nombre), y la vendedora lo descubre en la
+// primera frase de la llamada.
+//
+// Se cuenta sobre `lead_nombre_cambios` y no sobre `nombreOriginal` porque
+// un lead puede corregirse varias veces, y lo reclamable es cuantos LEADS
+// venian mal, no cuantas ediciones hubo.
+async function calidadDeCaptura(tenantId, { desde, hasta } = {}) {
+  const rango = {};
+  if (desde) rango.gte = desde;
+  if (hasta) rango.lte = hasta;
+  const filtroFecha = Object.keys(rango).length ? { createdAt: rango } : {};
+
+  const [recibidos, corregidos, ediciones] = await Promise.all([
+    prisma.lead.count({ where: { tenantId, ...filtroFecha } }),
+    // Leads distintos con al menos una corrección, no filas de bitácora.
+    prisma.lead
+      .count({ where: { tenantId, nombreOriginal: { not: null }, ...filtroFecha } }),
+    prisma.leadNombreCambio.count({ where: { tenantId, ...(Object.keys(rango).length ? { createdAt: rango } : {}) } }),
+  ]);
+
+  return {
+    recibidos,
+    nombresCorregidos: corregidos,
+    edicionesTotales: ediciones,
+    porcentaje: recibidos > 0 ? Math.round((corregidos / recibidos) * 100) : 0,
+  };
+}
+
 module.exports = {
   CATEGORIAS,
   DESENLACE_INALCANZABLE,
@@ -272,4 +306,5 @@ module.exports = {
   agregar,
   contarHoras,
   umbralDeIntentos,
+  calidadDeCaptura,
 };

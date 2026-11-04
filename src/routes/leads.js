@@ -245,6 +245,104 @@ router.put("/:id", authMiddleware, async (req, res) => {
   }
 });
 
+// PATCH /api/leads/:id/nombre — corrige el nombre del cliente.
+//
+// Los leads de CF llegan con nombres mal capturados ("Evaristo.cruz",
+// "OIGA PADESCO..."): un formulario web sin validar, o un captador con
+// prisa. La vendedora lo descubre en la primera frase de la llamada y hasta
+// ahora no tenía forma de arreglarlo -- el nombre se quedaba mal en el
+// ticket, en la guía de envío y en todo lo que se le mandara al cliente.
+//
+// Cada corrección deja una fila en `lead_nombre_cambios`, y no sólo una
+// línea de kardex, por dos razones:
+//
+//   revertir   si alguien corrige de más ("Ma. Guadalupe" -> "Lupita"), hay
+//              que poder volver al original exacto.
+//   medir      cuántos nombres hubo que corregir es una medida directa de
+//              la calidad de captura de CF, y es la clase de dato que se
+//              discute con ellos. Del kardex no se puede sacar sin leer
+//              JSON fila por fila.
+router.patch("/:id/nombre", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const nuevo = typeof req.body?.nombre === "string" ? req.body.nombre.trim().replace(/\s+/g, " ") : "";
+
+    if (!nuevo) return res.status(400).json({ error: "El nombre no puede quedar vacío" });
+    if (nuevo.length > 120) return res.status(400).json({ error: "El nombre es demasiado largo" });
+
+    const existing = await prisma.lead.findFirst({ where: filtroLead(req.user, id) });
+    if (!existing) return res.status(404).json({ error: "Lead no encontrado" });
+
+    // Guardar lo mismo que ya estaba no es una corrección: no ensucia la
+    // bitácora con filas que no dicen nada ni falsea la medida de calidad.
+    if (existing.nombre === nuevo) {
+      return res.json({ lead: await ocultarTelefonoLead(existing, req.user), sinCambios: true });
+    }
+
+    const [lead] = await prisma.$transaction([
+      prisma.lead.update({
+        where: { id },
+        data: {
+          nombre: nuevo,
+          // El original se guarda UNA vez, en la primera corrección: es el
+          // nombre tal como llegó del proveedor. Sobrescribirlo en cada
+          // edición convertiría "original" en "penúltimo" y perdería
+          // justamente el dato que mide la calidad de la captura.
+          ...(existing.nombreOriginal ? {} : { nombreOriginal: existing.nombre }),
+        },
+      }),
+      prisma.leadNombreCambio.create({
+        data: {
+          leadId: id,
+          tenantId: req.user.tenantId,
+          nombreAntes: existing.nombre,
+          nombreDespues: nuevo,
+          userId: req.user.id,
+          userNombre: req.user.nombre,
+        },
+      }),
+    ]);
+
+    detallarMovimiento(req, {
+      entidadId: id,
+      descripcion: `Corrigió el nombre del cliente: "${existing.nombre}" → "${nuevo}"`,
+      antes: { nombre: existing.nombre },
+      despues: { nombre: nuevo },
+    });
+
+    res.json({ lead: await ocultarTelefonoLead(lead, req.user), nombreOriginal: lead.nombreOriginal });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/leads/:id/nombre/historial — las correcciones del nombre.
+//
+// Es lo que permite revertir a lo que llegó del proveedor y ver quién
+// cambió qué.
+router.get("/:id/nombre/historial", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const lead = await prisma.lead.findFirst({
+      where: filtroLead(req.user, id),
+      select: { id: true, nombre: true, nombreOriginal: true },
+    });
+    if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
+
+    const cambios = await prisma.leadNombreCambio.findMany({
+      where: { leadId: id, tenantId: req.user.tenantId },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+
+    res.json({ nombre: lead.nombre, nombreOriginal: lead.nombreOriginal, cambios });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 // GET /api/leads/:id/historial — cuántas veces se ha llamado a este lead,
 // quién lo llamó, cuándo y en qué quedó cada intento.
 //

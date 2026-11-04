@@ -28,6 +28,7 @@ const { describirLeads } = require("../lib/semaforoLead");
 const { dondeRepartible, dondeEnEspera } = require("../lib/colaLeads");
 const { cronologiaDeLead } = require("../lib/cronologiaLead");
 const { emitir } = require("../lib/eventos");
+const { DIAS, validarRango, horariosDe } = require("../lib/horariosVendedora");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -550,6 +551,111 @@ router.get("/vendedores", gestionAdmin, async (req, res) => {
     });
 
     res.json({ vendedores });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/admin/vendedores/:id/horario — el turno de una vendedora.
+//
+// Lo necesita una sola regla, pero es la que decide a donde va el lead:
+// cuando el cliente pide que le llamen hoy mas tarde, la rellamada se queda
+// con ella SOLO si esa hora cae dentro de su turno (ver
+// src/lib/horariosVendedora.js). Sin horario configurado, el lead va a la
+// coordinadora marcado para que alguien revise la disponibilidad -- es
+// deliberado, no un error: prometerle al cliente una llamada a las 8 de la
+// noche dejandosela a alguien de quien no sabemos si trabaja a esa hora es
+// peor que pasarla a quien si puede decidir.
+router.get("/vendedores/:id/horario", gestionAdmin, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id);
+    const vendedora = await prisma.user.findFirst({
+      where: { id: userId, tenantId: req.user.tenantId },
+      select: { id: true, nombre: true, rol: true },
+    });
+    if (!vendedora) return res.status(404).json({ error: "Usuario no encontrado" });
+
+    res.json({
+      vendedora,
+      horarios: await horariosDe(userId, req.user.tenantId),
+      dias: DIAS,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// PUT /api/admin/vendedores/:id/horario — reemplaza el turno completo.
+//
+// Reemplazo y no actualizacion parcial: un turno es un conjunto de franjas
+// que se lee de corrido, y editarlas de una en una deja estados intermedios
+// imposibles (el martes sin horario entre dos guardados) justo mientras el
+// enrutamiento de rellamadas los esta consultando.
+router.put("/vendedores/:id/horario", adminMiddleware, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id);
+    const vendedora = await prisma.user.findFirst({
+      where: { id: userId, tenantId: req.user.tenantId },
+      select: { id: true, nombre: true },
+    });
+    if (!vendedora) return res.status(404).json({ error: "Usuario no encontrado" });
+
+    const entrada = Array.isArray(req.body?.horarios) ? req.body.horarios : [];
+    if (entrada.length > 21) {
+      return res.status(400).json({ error: "Demasiadas franjas: máximo 3 por día" });
+    }
+
+    // Se valida TODO antes de escribir nada: medio horario guardado es peor
+    // que ninguno, porque las rellamadas se enrutarian contra un turno que
+    // nadie capturo asi.
+    const franjas = [];
+    for (const f of entrada) {
+      const r = validarRango(f);
+      if (r.error) return res.status(400).json({ error: r.error });
+      franjas.push(r.valor);
+    }
+
+    // Franjas del mismo dia que se enciman: no son un error de captura
+    // cualquiera, significan que el turno dice dos cosas distintas sobre la
+    // misma hora y la regla de "dentro del turno" dejaria de ser una sola.
+    const porDia = new Map();
+    for (const f of franjas) {
+      if (!porDia.has(f.diaSemana)) porDia.set(f.diaSemana, []);
+      porDia.get(f.diaSemana).push(f);
+    }
+    for (const [dia, lista] of porDia) {
+      const ordenadas = lista.slice().sort((a, b) => a.horaInicio - b.horaInicio);
+      for (let i = 1; i < ordenadas.length; i++) {
+        if (ordenadas[i].horaInicio < ordenadas[i - 1].horaFin) {
+          return res.status(400).json({ error: `${DIAS[dia]}: hay dos franjas que se enciman` });
+        }
+      }
+    }
+
+    const antes = await horariosDe(userId, req.user.tenantId);
+
+    await prisma.$transaction([
+      prisma.horarioVendedora.deleteMany({ where: { userId, tenantId: req.user.tenantId } }),
+      ...(franjas.length
+        ? [
+            prisma.horarioVendedora.createMany({
+              data: franjas.map((f) => ({ ...f, userId, tenantId: req.user.tenantId })),
+            }),
+          ]
+        : []),
+    ]);
+
+    detallarMovimiento(req, {
+      entidad: "User",
+      entidadId: userId,
+      descripcion: `Configuró el horario de ${vendedora.nombre}`,
+      antes: { franjas: antes.length },
+      despues: { franjas: franjas.length },
+    });
+
+    res.json({ horarios: await horariosDe(userId, req.user.tenantId) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

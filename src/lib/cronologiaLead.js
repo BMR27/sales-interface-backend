@@ -36,6 +36,26 @@ function duracionLegible(segundos) {
 // (lecturas, cambios de direccion) solo haria ruido.
 const ACCIONES_RELEVANTES = /lead|venta|asign|descart|reactiv|supervis|devol|reagend/i;
 
+// Como se lee cada linea de la bitacora de asignaciones.
+function TITULO_ASIGNACION(a) {
+  const de = a.vendedorAnteriorNombre;
+  const para = a.vendedorNuevoNombre;
+  switch (a.evento) {
+    case "asignada":
+      return `Asignado a ${para ?? "una vendedora"}`;
+    case "reasignada":
+      return de ? `Reasignado de ${de} a ${para}` : `Asignado a ${para ?? "una vendedora"}`;
+    case "devuelta":
+      return de ? `${de} lo devolvió a la cola` : "Volvió a la cola";
+    case "rellamada":
+      return para ? `Rellamada, se queda con ${para}` : "Rellamada, pasa a la coordinadora";
+    case "cerrada":
+      return "Lead cerrado";
+    default:
+      return "Cambio de asignación";
+  }
+}
+
 async function cronologiaDeLead(leadId, tenantId) {
   const lead = await prisma.lead.findFirst({
     where: { id: leadId, tenantId },
@@ -48,7 +68,7 @@ async function cronologiaDeLead(leadId, tenantId) {
   });
   if (!lead) return null;
 
-  const [llamadas, movimientos] = await Promise.all([
+  const [llamadas, movimientos, asignaciones, nombres] = await Promise.all([
     prisma.llamada.findMany({
       where: { leadId, tenantId },
       orderBy: { fecha: "asc" },
@@ -62,6 +82,19 @@ async function cronologiaDeLead(leadId, tenantId) {
         userNombre: true, userRol: true, origen: true,
       },
     }),
+    // Cada cambio de manos. Es lo que `Lead.asignadoAt` no puede contar:
+    // ese solo guarda el reparto vigente, asi que un lead que paso por tres
+    // vendedoras en un dia se leia como si siempre hubiera sido de la
+    // ultima.
+    prisma.leadAsignacion.findMany({
+      where: { leadId, tenantId },
+      orderBy: { createdAt: "asc" },
+    }),
+    // Las correcciones del nombre del cliente.
+    prisma.leadNombreCambio.findMany({
+      where: { leadId, tenantId },
+      orderBy: { createdAt: "asc" },
+    }),
   ]);
 
   const eventos = [];
@@ -74,13 +107,42 @@ async function cronologiaDeLead(leadId, tenantId) {
     autor: null,
   });
 
-  if (lead.asignadoAt) {
+  // Cada cambio de manos, con su antes y su después. Sustituye al único
+  // evento que había (`lead.asignadoAt`), que sólo sabía del reparto
+  // vigente: un lead que pasó por tres vendedoras en un día se leía como si
+  // siempre hubiera sido de la última.
+  //
+  // Si no hay bitácora -- leads anteriores a que existiera -- se cae al
+  // dato viejo, que es mejor que dejar el hueco.
+  if (asignaciones.length > 0) {
+    for (const a of asignaciones) {
+      eventos.push({
+        tipo: a.evento === "asignada" || a.evento === "reasignada" ? "asignado" : "movimiento",
+        en: a.createdAt,
+        titulo: TITULO_ASIGNACION(a),
+        detalle: [a.resultado, a.motivo].filter(Boolean).join(" · ") || null,
+        autor: a.actorNombre ?? (a.automatico ? "Protocolo automático" : null),
+      });
+    }
+  } else if (lead.asignadoAt) {
     eventos.push({
       tipo: "asignado",
       en: lead.asignadoAt,
       titulo: lead.vendedor ? `Asignado a ${lead.vendedor.nombre}` : "Asignado",
       detalle: lead.asignadoPorCoordinador ? "Reparto de la coordinadora" : "Reparto automático",
       autor: null,
+    });
+  }
+
+  // Las correcciones del nombre del cliente. Van en la cronología porque
+  // explican por qué el ticket dice una cosa y el lead original otra.
+  for (const c of nombres) {
+    eventos.push({
+      tipo: "nombre",
+      en: c.createdAt,
+      titulo: `Nombre corregido: "${c.nombreAntes}" → "${c.nombreDespues}"`,
+      detalle: null,
+      autor: c.userNombre ?? null,
     });
   }
 
@@ -157,7 +219,13 @@ async function cronologiaDeLead(leadId, tenantId) {
     eventos.push({
       tipo: "descartado",
       en: lead.descartadoAt,
-      titulo: `Descartado — ${motivoLabel(lead.motivoDescarte)}`,
+      // Los dos cierres sin venta se nombran distinto: "No concretado"
+      // significa que el protocolo se agotó correctamente, y llamarlo
+      // "descartado" haría creer que alguien decidió tirarlo.
+      titulo:
+        lead.status === "NO_CONCRETADO"
+          ? `No concretado — ${motivoLabel(lead.motivoDescarte)}`
+          : `Descartado — ${motivoLabel(lead.motivoDescarte)}`,
       detalle: lead.motivoDescarteNota ?? "Sin nota",
       // Sin autor cuando lo descartó el protocolo: atribuírselo a una
       // persona sería culparla de una regla que no decidió.

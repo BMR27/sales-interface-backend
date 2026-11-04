@@ -4,7 +4,7 @@ const gestionAdmin = require("../middleware/gestionAdmin");
 const { getParametros } = require("../lib/parametros");
 const { LEAD_STATUSES, LEAD_STATUS_LABELS } = require("../lib/leadStatus");
 const {
-  CATEGORIAS, resumirLlamadas, agregar, contarHoras, umbralDeIntentos,
+  CATEGORIAS, resumirLlamadas, agregar, contarHoras, umbralDeIntentos, calidadDeCaptura,
 } = require("../lib/calidadLeads");
 const {
   inicioDeHoy, inicioDeSemana, inicioDeMes, inicioDeAno, diaLocal,
@@ -465,7 +465,19 @@ router.get("/calidad", async (req, res) => {
     // cambios de horario de la operacion.
     const horas = contarHoras(llamadas, inicioMes);
 
+    // Calidad de la CAPTURA, distinta de la calidad del lead: las cifras de
+    // arriba miden si el lead servia, esta mide si el dato venia bien
+    // escrito. Los leads de CF llegan de un formulario web sin validar y la
+    // vendedora corrige el nombre durante la llamada; cuantos hubo que
+    // corregir es lo que se le devuelve a CF como retroalimentacion.
+    const captura = {
+      ytd: await calidadDeCaptura(tenantId, { desde: inicioAno }),
+      mes: await calidadDeCaptura(tenantId, { desde: inicioMes }),
+      dia: await calidadDeCaptura(tenantId, { desde: inicioDia }),
+    };
+
     res.json({
+      captura,
       categorias: CATEGORIAS,
       umbralIntentos: umbral,
       generadoEn: ahora,
