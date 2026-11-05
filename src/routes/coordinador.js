@@ -281,11 +281,30 @@ router.get("/leads", async (req, res) => {
 
     if (state) where.state = state;
     if (productoId) where.productoId = parseInt(productoId);
+    // Se busca por lo mismo que en /api/admin/leads, mas el telefono.
+    //
+    // Antes solo miraba nombre y producto, y eso dejaba fuera el caso en
+    // que mas falta hace: identificar UN lead concreto. El nombre llega
+    // mal capturado desde el proveedor ("Evaristo.cruz"), asi que lo que
+    // se tiene a la mano para buscarlo es un folio -- el del proveedor
+    // cuando el reclamo viene de CF, el interno (PS-000615) cuando viene
+    // de adentro -- o el telefono cuando llama el cliente. Ninguno de los
+    // tres encontraba nada, y la pantalla respondia "No hay leads con
+    // estos filtros", que se lee como que el lead no existe.
     if (search) {
+      const texto = String(search).trim();
       filtros.push({
         OR: [
-          { nombre: { contains: search, mode: "insensitive" } },
-          { producto: { contains: search, mode: "insensitive" } },
+          { nombre: { contains: texto, mode: "insensitive" } },
+          { producto: { contains: texto, mode: "insensitive" } },
+          // Folio del proveedor: no es unico ni lo controlamos nosotros,
+          // pero es el que trae quien reclama desde fuera.
+          { folio: { contains: texto, mode: "insensitive" } },
+          { folioPS: { contains: texto, mode: "insensitive" } },
+          // El telefono se guarda en formato E.164 (+52...), asi que se
+          // busca por `contains`: quien lo teclea casi nunca pone la lada
+          // ni el signo.
+          { telefono: { contains: texto, mode: "insensitive" } },
         ],
       });
     }
