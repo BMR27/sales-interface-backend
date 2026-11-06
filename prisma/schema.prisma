@@ -32,6 +32,7 @@ model User {
   sesiones           Sesion[]
   grabaciones        GrabacionLlamada[]
   leadsDescartados   Lead[]             @relation("LeadDescartadoPor")
+  numerosBloqueados  NumeroBloqueado[]  @relation("NumeroBloqueadoPor")
   reagendasSugeridas Lead[]             @relation("LeadReagendaSugerida")
   horarios           HorarioVendedora[]
 
@@ -96,6 +97,7 @@ model Tenant {
   llamadas       Llamada[]
   productos      Producto[]
   productoAlias  ProductoAlias[]
+  numerosBloqueados NumeroBloqueado[]
   movimientos    MovimientoInventario[]
   appSettings    AppSetting[]
   leadItems      LeadItem[]
@@ -858,6 +860,35 @@ model ProductoAlias {
   @@unique([tenantId, aliasNorm])
   @@index([productoId])
   @@map("producto_alias")
+}
+
+// Numeros que no se deben volver a contactar.
+//
+// El motivo de descarte BLACKLIST ya existia, pero sin esta tabla no habia
+// donde guardar la lista: marcarlo era una observacion suelta en un lead y
+// el mismo numero volvia a entrar al dia siguiente.
+model NumeroBloqueado {
+  id Int @id @default(autoincrement())
+  // La CLAVE de comparacion: ultimos 10 digitos, sin lada ni signos (ver
+  // src/lib/numeroBloqueado.js). El mismo numero llega escrito de cuatro
+  // formas distintas y como texto no casarian.
+  telefono         String
+  // Tal como se capturo, solo para mostrarlo.
+  telefonoOriginal String?
+  motivo           String
+  nota             String?
+  createdAt        DateTime @default(now())
+
+  // Se queda en NULL si el usuario se da de baja: el bloqueo sigue
+  // valiendo aunque quien lo puso ya no este.
+  creadoPorId Int?
+  creadoPor   User? @relation("NumeroBloqueadoPor", fields: [creadoPorId], references: [id])
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, telefono])
+  @@map("numeros_bloqueados")
 }
 
 model LeadItem {

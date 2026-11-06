@@ -27,6 +27,7 @@ const PERMISOS_CATALOG = {
     { clave: "admin.vista.monitoreo", tipo: "modulo", grupo: "Navegacion", label: "Ver Monitoreo" },
     { clave: "admin.vista.kardex", tipo: "modulo", grupo: "Navegacion", label: "Ver Kardex (bitacora del sistema)" },
     { clave: "admin.vista.reportes", tipo: "modulo", grupo: "Navegacion", label: "Descargar reportes por periodo" },
+    { clave: "admin.vista.blacklist", tipo: "modulo", grupo: "Navegacion", label: "Ver repetidos y numeros bloqueados" },
     { clave: "admin.vista.grabaciones", tipo: "modulo", grupo: "Navegacion", label: "Escuchar grabaciones de llamadas" },
     { clave: "admin.equipo.editar", tipo: "accion", grupo: "Equipo", label: "Editar equipo (altas/bajas)" },
   ],

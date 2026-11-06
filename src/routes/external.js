@@ -4,6 +4,7 @@ const { getNextVendedor } = require("../lib/assignment");
 const { getParametros } = require("../lib/parametros");
 const { siguienteFolio } = require("../lib/folios");
 const { resolverProducto } = require("../lib/catalogoProducto");
+const { buscarBloqueo } = require("../lib/numeroBloqueado");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
 const { crearAviso } = require("../lib/avisos");
 const { detallarMovimiento } = require("../lib/auditoria");
@@ -101,6 +102,26 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
         tenantId,
       },
     });
+
+    // Numero bloqueado: no se convierte en lead.
+    //
+    // Va DESPUES de crear el incomingLead y antes de crear el lead, a
+    // proposito. El registro de lo que mando el proveedor se conserva
+    // siempre -- es lo que permite conciliar y, llegado el caso,
+    // demostrarle que se le cobro un numero vetado -- pero nadie lo va a
+    // llamar. Se responde 201 y no un error: el proveedor mando algo bien
+    // formado, y rebotarlo como fallo suyo lo haria reintentar.
+    const bloqueo = await buscarBloqueo(prisma, tenantId, phone);
+    if (bloqueo) {
+      await prisma.incomingLead.update({
+        where: { id: incomingLead.id },
+        data: {
+          status: "FAILED",
+          errorMessage: `Número en la lista de bloqueados: ${bloqueo.motivo}`,
+        },
+      });
+      return res.status(201).json({ received: true, folio, leadId: null, assignedTo: null });
+    }
 
     // Por defecto el lead entra SIN vendedora y espera en la cola del
     // coordinador, que lo reparte a mano. El reparto automatico por turnos
