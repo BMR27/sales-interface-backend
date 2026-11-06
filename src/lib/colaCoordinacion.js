@@ -5,9 +5,17 @@
 // coordinadora necesita decidir en cada momento es cual repartir PRIMERO, y
 // esa respuesta no sale de la fecha sino de tres preguntas en este orden:
 //
-//   1. ¿Hay leads viejos que nadie ha llamado nunca?  -- se estan perdiendo
-//   2. ¿Hay leads que entraron hoy y siguen intactos? -- son los frescos
+//   1. ¿Hay leads que entraron hoy y siguen intactos? -- son los frescos
+//   2. ¿Hay leads viejos que nadie ha llamado nunca?  -- se estan perdiendo
 //   3. ¿Hay reintentos cuya espera ya termino?        -- toca insistir
+//
+// Los NUEVOS van primero por decision de operacion: un lead recien captado
+// se contacta mejor mientras el cliente todavia recuerda haber dejado sus
+// datos, y esa ventana se cierra en horas. Antes encabezaban los
+// pendientes antiguos; la contrapartida de este orden es que un lead viejo
+// sin llamadas puede quedar debajo de una tanda de frescos, asi que sigue
+// en segundo lugar -- por encima de todo lo demas -- y la pestaña
+// "Atrasados" lo sigue sacando aparte.
 //
 // Dentro de cada grupo, del mas antiguo al mas reciente: el que lleva mas
 // tiempo esperando es el que menos tiempo le queda.
@@ -22,24 +30,31 @@
 //   rellamadas  tienen hora pactada con el cliente. Van en su propia
 //               alerta, ordenadas por esa hora: una rellamada vencida es
 //               un compromiso incumplido, no un lead mas en la fila.
+//
+// Y al final, lo que ya no es trabajo: los concretados y los descartados.
+// Iban mezclados en "Ya asignados" -- cualquier lead con vendedora caia
+// ahi, sin mirar su estatus -- asi que esa seccion mostraba 493 leads
+// cerrados junto a los que de verdad se estan trabajando. Se separan
+// porque son preguntas distintas: "quien esta atendiendo esto" no es
+// "esto ya se acabo".
 const { diaLocal } = require("./fechasLocales");
 
 // El orden es el del documento. `prioridad` es lo que se dibuja en la
 // pastilla de la derecha de cada seccion.
 const GRUPOS = [
   {
+    id: "nuevos",
+    titulo: "Nuevos leads",
+    descripcion: "Leads recién captados, listos para asignar y contactar.",
+    prioridad: "Prioridad alta",
+    tono: "media",
+  },
+  {
     id: "pendientes_antiguos",
     titulo: "Pendientes antiguos, sin llamadas",
     descripcion: "Leads que llevan más tiempo esperando y no tienen llamadas registradas.",
     prioridad: "Prioridad alta",
     tono: "alta",
-  },
-  {
-    id: "nuevos",
-    titulo: "Nuevos leads",
-    descripcion: "Leads recién captados, listos para asignar y contactar.",
-    prioridad: "Prioridad media",
-    tono: "media",
   },
   {
     id: "reintentos",
@@ -69,6 +84,22 @@ const GRUPOS = [
     prioridad: "En curso",
     tono: "asignado",
   },
+  // Los dos cierres van hasta abajo: ya no son trabajo por repartir, pero
+  // esconderlos obligaria a salir de la pantalla para consultarlos.
+  {
+    id: "concretados",
+    titulo: "Concretados",
+    descripcion: "Terminaron en venta. Se muestran al final: ya no hay nada que repartir.",
+    prioridad: "Cerrados",
+    tono: "concretado",
+  },
+  {
+    id: "descartados",
+    titulo: "Descartados",
+    descripcion: "Se cerraron sin venta, por descarte o por agotarse el protocolo.",
+    prioridad: "Cerrados",
+    tono: "descartado",
+  },
 ];
 
 const POR_ID = Object.fromEntries(GRUPOS.map((g) => [g.id, g]));
@@ -92,6 +123,13 @@ function esNuevoDeHoy(lead, intentos, hoy) {
 // misma respuesta se clasifiquen contra el mismo instante: calculado por
 // lead, un lote que tarde en procesarse podria partir el dia a la mitad.
 function grupoDe(lead, { intentos, ahora, hoy }) {
+  // El estatus se revisa ANTES que la vendedora. Un lead cerrado casi
+  // siempre conserva la vendedora que lo cerro, asi que preguntar primero
+  // por `vendedorId` lo mandaba a "Ya asignados" y esa seccion acababa
+  // llena de leads terminados.
+  if (lead.status === "VENTA") return "concretados";
+  if (lead.status === "DESCARTADO" || lead.status === "NO_CONCRETADO") return "descartados";
+
   if (lead.vendedorId) return "asignados";
 
   // Una cita pactada manda sobre todo lo demas: es lo unico de esta lista
@@ -120,6 +158,13 @@ function comparadorDe(grupoId) {
   }
   if (grupoId === "en_espera") {
     return (a, b) => fecha(a.disponibleDesde) - fecha(b.disponibleDesde);
+  }
+  // En los cierres se invierte: lo mas reciente arriba. Aqui ya no se
+  // reparte nada, se consulta -- y lo que se consulta es lo que acaba de
+  // pasar, no lo de hace tres semanas.
+  if (grupoId === "descartados" || grupoId === "concretados") {
+    return (a, b) => fecha(b.descartadoAt ?? b.updatedAt ?? b.createdAt) -
+                     fecha(a.descartadoAt ?? a.updatedAt ?? a.createdAt);
   }
   return (a, b) => fecha(a.createdAt) - fecha(b.createdAt);
 }

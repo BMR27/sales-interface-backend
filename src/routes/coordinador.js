@@ -14,7 +14,7 @@ const { filtroDisponible } = require("../lib/protocoloLeads");
 const { dondeRepartible, dondeEnEspera } = require("../lib/colaLeads");
 const { describirLeads } = require("../lib/semaforoLead");
 const { emitir } = require("../lib/eventos");
-const { LEAD_STATUSES_ABIERTOS } = require("../lib/leadStatus");
+const { LEAD_STATUSES_ABIERTOS, LEAD_STATUSES_CERRADOS } = require("../lib/leadStatus");
 const { grupoDe, agrupar, esNuevoDeHoy, motivoDeAtraso } = require("../lib/colaCoordinacion");
 const { contextoDeAsignacion, asignacionesDeHoy } = require("../lib/historialAsignaciones");
 const { registrarAsignacion } = require("../lib/cicloLead");
@@ -310,26 +310,48 @@ router.get("/leads", async (req, res) => {
     }
     if (filtros.length > 0) where.AND = filtros;
 
-    const [leads, sinAsignar, enEspera, atrasados, params] = await Promise.all([
+    // El trabajo y los cierres se piden POR SEPARADO, cada uno con su tope.
+    //
+    // En una sola consulta con `take: 100` los cerrados nunca aparecian:
+    // hay mas de 100 leads sin vendedora, asi que el corte se agotaba
+    // antes de llegar a ellos y la seccion "Descartados" salia vacia
+    // aunque hubiera cientos. Y subir el tope a secas traeria 400
+    // descartados para mostrar seis: lo que se quiere de un cierre es ver
+    // los ultimos, no el historico -- para eso estan Historial y el
+    // reporte por periodo.
+    const whereTrabajo = { ...where, status: { in: LEAD_STATUSES_ABIERTOS } };
+    const whereCerrados = { ...where, status: { in: LEAD_STATUSES_CERRADOS } };
+
+    const incluir = {
+      vendedor: { select: { id: true, nombre: true } },
+      // La que atendió la llamada donde se pidió la reagenda: el
+      // protocolo pide devolvérsela a ella con prioridad.
+      reagendaVendedorSugerido: { select: { id: true, nombre: true } },
+      // Cuantas veces se le ha marcado y cuando fue la ultima: es lo
+      // que separa un lead intacto de uno que ya rebotó, y lo que deja
+      // ver el ritmo del seguimiento sin abrir el historial.
+      _count: { select: { llamadas: true } },
+      llamadas: { orderBy: { fecha: "desc" }, take: 1, select: { fecha: true, desenlace: true, contestada: true } },
+    };
+
+    const [trabajo, cerrados, sinAsignar, enEspera, atrasados, params] = await Promise.all([
       prisma.lead.findMany({
-        where,
+        where: whereTrabajo,
         // El orden fino lo pone src/lib/colaCoordinacion.js, que agrupa por
         // sección y ordena dentro de cada una. Este `orderBy` solo decide
         // QUÉ 100 leads se traen cuando hay más: los más antiguos, que son
         // los que están por perderse.
         orderBy: [{ vendedorId: { sort: "asc", nulls: "first" } }, { createdAt: "asc" }],
         take: 100,
-        include: {
-          vendedor: { select: { id: true, nombre: true } },
-          // La que atendió la llamada donde se pidió la reagenda: el
-          // protocolo pide devolvérsela a ella con prioridad.
-          reagendaVendedorSugerido: { select: { id: true, nombre: true } },
-          // Cuantas veces se le ha marcado y cuando fue la ultima: es lo
-          // que separa un lead intacto de uno que ya rebotó, y lo que deja
-          // ver el ritmo del seguimiento sin abrir el historial.
-          _count: { select: { llamadas: true } },
-          llamadas: { orderBy: { fecha: "desc" }, take: 1, select: { fecha: true, desenlace: true, contestada: true } },
-        },
+        include: incluir,
+      }),
+      // Los cierres: los más recientes y pocos. Van al final de la cola y
+      // son para consultar, no para repartir.
+      prisma.lead.findMany({
+        where: whereCerrados,
+        orderBy: { updatedAt: "desc" },
+        take: 40,
+        include: incluir,
       }),
       prisma.lead.count({ where: dondeRepartible(req.user.tenantId) }),
       prisma.lead.count({ where: dondeEnEspera(req.user.tenantId) }),
@@ -349,6 +371,10 @@ router.get("/leads", async (req, res) => {
       }),
       getParametros(req.user.tenantId),
     ]);
+
+    // Las dos consultas se vuelven una sola lista: de aquí para abajo todo
+    // trata los leads igual, y es `agrupar` quien los reparte en secciones.
+    const leads = [...trabajo, ...cerrados];
 
     // El semaforo y los relojes salen de src/lib/semaforoLead.js, que es
     // el mismo que usan la pantalla del admin y la de la vendedora: si
