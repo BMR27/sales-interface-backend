@@ -248,6 +248,7 @@ router.get("/leads", async (req, res) => {
       // pero no salen en la cola normal para que el protocolo se respete
       // solo. Esconderlos del todo era peor: parecian haberse perdido.
       where.vendedorId = null;
+      where.status = { in: LEAD_STATUSES_ABIERTOS };
       where.disponibleDesde = { gt: new Date() };
     } else if (asignacion === "atrasados") {
       // La pestaña de control del protocolo: lo que ya debio haberse hecho.
@@ -268,6 +269,12 @@ router.get("/leads", async (req, res) => {
       });
     } else if (asignacion !== "todos") {
       where.vendedorId = null;
+      // Solo lo que sigue VIVO. Sin esto, un lead descartado que quedo sin
+      // vendedora reaparecia en el feed como repartible y la coordinadora
+      // podia asignarlo -- el reclamo que Karen levanto dos veces. Un
+      // cierre no vuelve a la cola solo: para eso esta la reactivacion,
+      // que es una decision explicita.
+      where.status = { in: LEAD_STATUSES_ABIERTOS };
       // Un lead que acaba de rebotar por no contestar sigue en la cola
       // pero no se reparte hasta que pase su espera: entregarlo de
       // inmediato seria marcarle tres veces en cinco minutos.

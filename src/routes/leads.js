@@ -16,6 +16,8 @@ const { filtroLead } = require("../lib/accesoLead");
 const { getParametros } = require("../lib/parametros");
 const { cronologiaDeLead } = require("../lib/cronologiaLead");
 const { describirLeads } = require("../lib/semaforoLead");
+const { evaluarTurnoDe, evaluarTurno, horariosDe } = require("../lib/horariosVendedora");
+const { validarNombre } = require("../lib/nombreCliente");
 const { emitir } = require("../lib/eventos");
 
 const router = express.Router();
@@ -28,12 +30,25 @@ router.get("/", authMiddleware, async (req, res) => {
     const vendedorId = req.user.id;
 
     const where = { vendedorId };
+
+    // El listado de trabajo solo trae leads VIVOS.
+    //
+    // Antes traia todos los del vendedorId, cerrados incluidos: una
+    // vendedora con tres meses de historia abria la pantalla con cientos
+    // de descartados y ventas entre los que tenia que encontrar los cuatro
+    // que si puede trabajar. Lo cerrado se consulta en su Historial, no en
+    // la cola.
+    //
+    // Si se pide un status concreto se respeta -- ahi la pregunta es otra
+    // ("¿cuales descarte?") y filtrar por encima la dejaria sin respuesta.
     if (status) {
       const parsed = parseLeadStatus(status);
       if (!parsed) {
         return res.status(400).json({ error: `status inválido. Valores: ${LEAD_STATUSES.join(", ")}` });
       }
       where.status = parsed;
+    } else {
+      where.status = { in: LEAD_STATUSES_ABIERTOS };
     }
     if (search) {
       where.OR = [
@@ -42,16 +57,51 @@ router.get("/", authMiddleware, async (req, res) => {
       ];
     }
 
-    const leads = await prisma.lead.findMany({
-      where,
-      orderBy: { updatedAt: "desc" },
-      include: {
-        // La vendedora ve el mismo semaforo que su coordinadora: cuales no
-        // ha tocado, cuales ya trabajo y cuanto le queda a cada uno.
-        _count: { select: { llamadas: true } },
-        llamadas: { orderBy: { fecha: "desc" }, take: 1, select: { fecha: true, desenlace: true, contestada: true } },
-      },
-    });
+    // Fuera de turno, la lista queda vacia.
+    //
+    // No es una restriccion de seguridad -- la sesion sigue siendo valida y
+    // el resto de la aplicacion responde igual -- sino de alcance: los
+    // datos del cliente no tienen por que estar a la vista a las once de la
+    // noche. Una vendedora que entra fuera de su horario ve su pantalla sin
+    // leads y el motivo escrito, no un error.
+    //
+    // Sin horario configurado NO se bloquea nada: dejar sin trabajo a
+    // alguien por un dato que nadie capturo seria peor que mostrarle sus
+    // leads. Esa situacion ya se avisa aparte (requiereRevisionHorario).
+    const turno = await evaluarTurnoDe(vendedorId, req.user.tenantId);
+    const fueraDeTurno = turno.configurado && !turno.dentro;
+
+    const leads = fueraDeTurno
+      ? []
+      : await prisma.lead.findMany({
+          where,
+          orderBy: { updatedAt: "desc" },
+          include: {
+            // La vendedora ve el mismo semaforo que su coordinadora: cuales no
+            // ha tocado, cuales ya trabajo y cuanto le queda a cada uno.
+            _count: { select: { llamadas: true } },
+            llamadas: { orderBy: { fecha: "desc" }, take: 1, select: { fecha: true, desenlace: true, contestada: true } },
+          },
+        });
+
+    // Una rellamada que cae fuera del turno de esta vendedora no es suya.
+    //
+    // El cliente pidio que le llamaran el jueves a las 8 p.m.; si ella sale
+    // a las 7, ese compromiso no lo puede cumplir. Dejarselo en la lista
+    // garantiza que se incumpla: nadie mas lo ve y ella no esta. Sale de su
+    // listado y vuelve a la cola, donde la coordinadora lo reparte a quien
+    // si este en ese horario.
+    //
+    // Solo se filtran las que tienen hora pactada. Un lead sin cita no
+    // depende del reloj de nadie.
+    const horarios = turno.configurado ? await horariosDe(vendedorId, req.user.tenantId) : [];
+    const visibles =
+      horarios.length === 0
+        ? leads
+        : leads.filter((l) => {
+            if (l.status !== "REAGENDADO" || !l.fechaReagenda) return true;
+            return evaluarTurno(horarios, l.fechaReagenda).dentro;
+          });
 
     const counts = await prisma.lead.groupBy({
       by: ["status"],
@@ -69,14 +119,14 @@ router.get("/", authMiddleware, async (req, res) => {
       // ocultarTelefonoVendedor esta encendido (ver src/lib/telefono.js).
       leads: await (async () => {
         const descripciones = await describirLeads(
-          leads,
+          visibles,
           req.user.tenantId,
-          new Map(leads.map((l) => [l.id, {
+          new Map(visibles.map((l) => [l.id, {
             intentos: l._count.llamadas,
             ultimaLlamada: l.llamadas[0] ?? null,
           }]))
         );
-        const limpios = leads.map((l, i) => {
+        const limpios = visibles.map((l, i) => {
           const { _count, llamadas, ...lead } = l;
           return { ...lead, ...descripciones[i] };
         });
@@ -84,6 +134,9 @@ router.get("/", authMiddleware, async (req, res) => {
       })(),
       counts: counts.reduce((acc, c) => ({ ...acc, [c.status]: c._count }), {}),
       totalVentas: totalMonto._sum.monto || 0,
+      // Para que la pantalla explique una lista vacia en vez de dejarla en
+      // blanco: "Tu turno del lunes es de 9:00 a.m. a 7:00 p.m.".
+      turno: { configurado: turno.configurado, dentro: turno.dentro, motivo: turno.motivo ?? null },
     });
   } catch (err) {
     console.error(err);
@@ -315,6 +368,13 @@ router.patch("/:id/nombre", authMiddleware, async (req, res) => {
 
     if (!nuevo) return res.status(400).json({ error: "El nombre no puede quedar vacío" });
     if (nuevo.length > 120) return res.status(400).json({ error: "El nombre es demasiado largo" });
+
+    // Ni digitos ni signos: lo que llega de CF trae basura del formulario
+    // ("Evaristo.cruz", "MARIA LOPEZ 55512") y esto es justo el momento en
+    // que se corrige. La ñ, los acentos, el apostrofo y el guion si pasan
+    // -- hay apellidos que los llevan (ver src/lib/nombreCliente.js).
+    const invalido = validarNombre(nuevo);
+    if (invalido) return res.status(400).json({ error: invalido });
 
     const existing = await prisma.lead.findFirst({ where: filtroLead(req.user, id) });
     if (!existing) return res.status(404).json({ error: "Lead no encontrado" });

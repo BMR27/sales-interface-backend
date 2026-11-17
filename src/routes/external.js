@@ -5,6 +5,7 @@ const { getParametros } = require("../lib/parametros");
 const { siguienteFolio } = require("../lib/folios");
 const { resolverProducto } = require("../lib/catalogoProducto");
 const { buscarBloqueo } = require("../lib/numeroBloqueado");
+const { normalizarNombre } = require("../lib/nombreCliente");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
 const { crearAviso } = require("../lib/avisos");
 const { detallarMovimiento } = require("../lib/auditoria");
@@ -103,16 +104,29 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
     const buyerId =
       buyerIdCrudo === null || buyerIdCrudo === "" ? null : String(buyerIdCrudo).slice(0, 120);
 
-    const nombreCompleto = consumerName || [firstName, lastName].filter(Boolean).join(" ").trim();
-    if (!nombreCompleto) {
+    const nombreCrudo = consumerName || [firstName, lastName].filter(Boolean).join(" ").trim();
+    if (!nombreCrudo) {
       return res.status(400).json({ error: "Envía consumerName, o firstName y lastName" });
     }
+
+    // Se limpia lo que venga del formulario de CF.
+    //
+    // No se rechaza el lead: se cobro y el cliente existe, asi que
+    // devolverlo por un punto en el nombre seria tirar una venta. Se quita
+    // lo que no es nombre ("Evaristo.cruz" -> "Evaristo cruz") y, si hubo
+    // cambio, queda constancia igual que cuando lo corrige una vendedora
+    // -- el original en `nombreOriginal` y la fila en lead_nombre_cambios.
+    // De ahi sale la medida de calidad de captura que se le devuelve a CF.
+    const nombreCompleto = normalizarNombre(nombreCrudo) || nombreCrudo;
+    const nombreSeLimpio = nombreCompleto !== nombreCrudo;
 
     const tenantId = req.apiKey.tenantId;
 
     const incomingLead = await prisma.incomingLead.create({
       data: {
-        folio, consumerName: nombreCompleto, phone, country, state, zipCode,
+        // Lo que mando el proveedor, SIN limpiar: este registro es la
+        // evidencia de como llego, y normalizarlo aqui borraria la prueba.
+        folio, consumerName: nombreCrudo, phone, country, state, zipCode,
         category, product, internalSku, externalSku,
         buyerId,
         rawPayload: body,
@@ -177,6 +191,9 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       data: {
         folioPS,
         nombre: nombreCompleto,
+        // Solo si se limpio: `nombreOriginal` significa "asi llego", y
+        // llenarlo cuando no hubo cambio lo volveria ruido.
+        nombreOriginal: nombreSeLimpio ? nombreCrudo : null,
         apellido: lastName || null,
         edad: Number.isFinite(Number(age)) && age !== "" && age != null ? Number(age) : null,
         telefono: phone,
@@ -201,6 +218,22 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
         tenantId,
       },
     });
+
+    // La constancia de la limpieza, en la misma bitacora que usan las
+    // correcciones de la vendedora. Asi "cuantos nombres hubo que
+    // corregir" es una sola cuenta, sin importar si lo hizo una persona o
+    // el sistema al recibirlos.
+    if (nombreSeLimpio) {
+      await prisma.leadNombreCambio.create({
+        data: {
+          leadId: lead.id,
+          tenantId,
+          nombreAntes: nombreCrudo,
+          nombreDespues: nombreCompleto,
+          userNombre: "Normalización automática",
+        },
+      }).catch(() => {});
+    }
 
     await prisma.incomingLead.update({
       where: { id: incomingLead.id },
