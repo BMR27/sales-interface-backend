@@ -33,6 +33,8 @@ model User {
   grabaciones        GrabacionLlamada[]
   leadsDescartados   Lead[]             @relation("LeadDescartadoPor")
   numerosBloqueados  NumeroBloqueado[]  @relation("NumeroBloqueadoPor")
+  ticketsComision    TicketComision[]   @relation("TicketDeVendedora")
+  ticketsAprobados   TicketComision[]   @relation("TicketAprobadoPor")
   reagendasSugeridas Lead[]             @relation("LeadReagendaSugerida")
   horarios           HorarioVendedora[]
 
@@ -98,6 +100,7 @@ model Tenant {
   productos      Producto[]
   productoAlias  ProductoAlias[]
   numerosBloqueados NumeroBloqueado[]
+  ticketsComision   TicketComision[]
   movimientos    MovimientoInventario[]
   appSettings    AppSetting[]
   leadItems      LeadItem[]
@@ -898,6 +901,47 @@ model NumeroBloqueado {
 
   @@unique([tenantId, telefono])
   @@map("numeros_bloqueados")
+}
+
+// El ticket de comisión de un día de trabajo.
+//
+// La comisión de la quincena es un número vivo: se recalcula cada vez que
+// se confirma una entrega o se cancela una venta. Eso sirve para saber
+// cuánto va ganando, no para cobrar. Un ticket se cierra al final de la
+// jornada y se congela: de ahí en adelante cambia su ESTATUS, no su
+// importe.
+model TicketComision {
+  id       Int      @id @default(autoincrement())
+  // El día de la jornada, a medianoche en el huso de la operación.
+  fecha    DateTime @db.Date
+  piezas   Int      @default(0)
+  ventas   Int      @default(0)
+  monto    Float    @default(0)
+  // Las ventas que lo componen, tal como estaban ese día. Si mañana se
+  // cancela una, el ticket ya firmado no cambia: fue lo que se pagó, y lo
+  // que se corrige es el ticket siguiente, no la historia.
+  detalle  Json?
+  // EN_APROBACION | APROBADO | LIQUIDADO
+  estatus  String   @default("EN_APROBACION")
+
+  aprobadoPorId Int?
+  aprobadoPor   User?     @relation("TicketAprobadoPor", fields: [aprobadoPorId], references: [id])
+  aprobadoAt    DateTime?
+  // El acuse de la vendedora de que recibió el pago.
+  firmadoAt     DateTime?
+
+  vendedorId Int
+  vendedor   User @relation("TicketDeVendedora", fields: [vendedorId], references: [id])
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, vendedorId, fecha])
+  @@index([tenantId, estatus])
+  @@map("tickets_comision")
 }
 
 model LeadItem {

@@ -19,6 +19,7 @@ const { grupoDe, agrupar, esNuevoDeHoy, motivoDeAtraso } = require("../lib/colaC
 const { contextoDeAsignacion, asignacionesDeHoy } = require("../lib/historialAsignaciones");
 const { registrarAsignacion } = require("../lib/cicloLead");
 const { marcarRecurrentes } = require("../lib/clienteRecurrente");
+const { ESTATUS_LABEL: TICKET_LABEL, generarTicketsDelDia, aprobar: aprobarTicket } = require("../lib/ticketsComision");
 
 router.use(authMiddleware, coordinacionMiddleware);
 
@@ -131,6 +132,61 @@ router.get("/overview", async (req, res) => {
       .sort((a, b) => b.eficiencia - a.eficiencia);
 
     res.json({ totales, vendedores: vendedoresConEficiencia });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/coordinador/tickets-comision?estatus=
+//
+// Lo que la coordinadora tiene que revisar antes de que se pague. Cada
+// ticket es un día de trabajo de una vendedora, con las ventas que lo
+// componen congeladas: aprobar es firmar que las órdenes y los importes
+// están bien.
+router.get("/tickets-comision", async (req, res) => {
+  try {
+    // Se cierran los del día antes de listar: el job de fin de jornada es
+    // el cierre normal, pero si la coordinadora entra antes de que corra
+    // es mejor que vea el día en curso que una lista incompleta.
+    await generarTicketsDelDia(req.user.tenantId).catch(() => {});
+
+    const estatus = req.query.estatus;
+    const tickets = await prisma.ticketComision.findMany({
+      where: {
+        tenantId: req.user.tenantId,
+        ...(estatus ? { estatus: String(estatus) } : {}),
+      },
+      orderBy: [{ fecha: "desc" }, { id: "desc" }],
+      take: 200,
+      include: {
+        vendedor: { select: { id: true, nombre: true } },
+        aprobadoPor: { select: { nombre: true } },
+      },
+    });
+
+    res.json({
+      tickets: tickets.map((t) => ({ ...t, estatusLabel: TICKET_LABEL[t.estatus] ?? t.estatus })),
+      porAprobar: await prisma.ticketComision.count({
+        where: { tenantId: req.user.tenantId, estatus: "EN_APROBACION" },
+      }),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/coordinador/tickets-comision/:id/aprobar
+router.post("/tickets-comision/:id/aprobar", async (req, res) => {
+  try {
+    const { ticket, error } = await aprobarTicket(
+      req.user.tenantId,
+      parseInt(req.params.id),
+      req.user
+    );
+    if (error) return res.status(400).json({ error });
+    res.json({ ticket });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

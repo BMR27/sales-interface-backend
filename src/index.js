@@ -50,12 +50,14 @@ const parametrosRoutes = require("./routes/parametros");
 const estadisticasRoutes = require("./routes/estadisticas");
 const reportesRoutes = require("./routes/reportes");
 const blacklistRoutes = require("./routes/blacklist");
+const historialVendedoraRoutes = require("./routes/historialVendedora");
 const eventosRoutes = require("./routes/eventos");
 const { startFullvectorRetryJob } = require("./jobs/fullvectorRetry");
 const { startEntregasSyncJob } = require("./jobs/entregasSync");
 const { startPurgaGrabacionesJob } = require("./jobs/purgaGrabaciones");
 const { startReactivarDescartadosJob } = require("./jobs/reactivarDescartados");
 const { startCierrePorPlazoJob } = require("./jobs/cierrePorPlazo");
+const { startCierreJornadaJob } = require("./jobs/cierreJornada");
 const { startAlertaReagendasJob } = require("./jobs/alertaReagendas");
 const { startResultadosPendientesJob } = require("./jobs/resultadosPendientes");
 const { startAlertaAtrasosJob } = require("./jobs/alertaAtrasos");
@@ -162,6 +164,7 @@ app.use("/api/admin/parametros", parametrosRoutes);
 app.use("/api/admin/estadisticas", estadisticasRoutes);
 app.use("/api/admin/reportes", reportesRoutes);
 app.use("/api/admin/blacklist", blacklistRoutes);
+app.use("/api/mi-historial", historialVendedoraRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/external", externalRoutes);
 app.use("/api/productos", productosRoutes);
@@ -189,6 +192,7 @@ app.listen(PORT, () => {
   startPurgaGrabacionesJob();
   startReactivarDescartadosJob();
   startCierrePorPlazoJob();
+  startCierreJornadaJob();
   startAlertaReagendasJob();
   // Red de seguridad del protocolo: tipifica las llamadas sin contestar que
   // nadie alcanzo a clasificar en el modal de resultado.
