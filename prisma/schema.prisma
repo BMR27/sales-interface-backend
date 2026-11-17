@@ -160,6 +160,11 @@ model Lead {
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
   source             LeadSource @default(MANUAL)
+  // De donde viene, en terminos de negocio: "CF" si lo mando el proveedor,
+  // "PS" si salio de nuestra landing. `source` solo dice por que puerta
+  // entro (API o captura manual), y desde que la landing usa la misma API
+  // eso dejo de distinguirlos.
+  origen             String?
   country            String?
   city               String?
   ip                 String?
@@ -649,6 +654,10 @@ enum FullvectorSyncStatus {
 model ApiKey {
   id         Int       @id @default(autoincrement())
   label      String
+  // Quien integra por esta llave: "CF" (proveedor de leads), "PS" (nuestra
+  // landing). Se copia al lead cuando entra, porque es un dato de la
+  // integracion y no del payload.
+  origen     String?
   keyPrefix  String
   keyHash    String    @unique
   active     Boolean   @default(true)

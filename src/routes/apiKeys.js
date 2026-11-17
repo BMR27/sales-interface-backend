@@ -15,7 +15,7 @@ router.get("/", async (req, res) => {
     const keys = await prisma.apiKey.findMany({
       where: { tenantId: req.user.tenantId },
       orderBy: { createdAt: "desc" },
-      select: { id: true, label: true, keyPrefix: true, active: true, createdAt: true, lastUsedAt: true },
+      select: { id: true, label: true, origen: true, keyPrefix: true, active: true, createdAt: true, lastUsedAt: true },
     });
     res.json({ keys });
   } catch (err) {
@@ -27,13 +27,19 @@ router.get("/", async (req, res) => {
 // POST /api/admin/api-keys
 router.post("/", async (req, res) => {
   try {
-    const { label } = req.body;
+    const { label, origen } = req.body;
     if (!label) return res.status(400).json({ error: "label requerido" });
+
+    // De quien es esta llave: "CF" para el proveedor de leads, "PS" para
+    // nuestra landing. Decide como se marca cada lead que entre por ella,
+    // asi que se pide al crearla en vez de deducirlo de la etiqueta.
+    const origenLimpio = typeof origen === "string" ? origen.trim().toUpperCase().slice(0, 10) : null;
 
     const fullKey = `sk_${crypto.randomBytes(24).toString("hex")}`;
     const apiKey = await prisma.apiKey.create({
       data: {
         label,
+        origen: origenLimpio || null,
         keyPrefix: fullKey.slice(0, 12),
         keyHash: hashKey(fullKey),
         tenantId: req.user.tenantId,
@@ -43,6 +49,7 @@ router.post("/", async (req, res) => {
     res.status(201).json({
       id: apiKey.id,
       label: apiKey.label,
+      origen: apiKey.origen,
       keyPrefix: apiKey.keyPrefix,
       key: fullKey,
       createdAt: apiKey.createdAt,

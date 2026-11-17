@@ -207,6 +207,10 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
         vendedorId: vendedor?.id ?? null,
         asignadoAt: vendedor ? new Date() : null,
         source: "EXTERNAL_API",
+        // De donde viene en terminos de negocio. Sale de la llave por la
+        // que entro, no del payload: cada integracion sabe quien es, y el
+        // proveedor no tiene por que declararlo.
+        origen: req.apiKey.origen ?? null,
         country,
         city: city || null,
         ip: ip || null,
