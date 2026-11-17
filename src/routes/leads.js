@@ -18,6 +18,7 @@ const { cronologiaDeLead } = require("../lib/cronologiaLead");
 const { describirLeads } = require("../lib/semaforoLead");
 const { evaluarTurnoDe, evaluarTurno, horariosDe } = require("../lib/horariosVendedora");
 const { validarNombre } = require("../lib/nombreCliente");
+const { marcarRecurrentes } = require("../lib/clienteRecurrente");
 const { emitir } = require("../lib/eventos");
 
 const router = express.Router();
@@ -126,9 +127,12 @@ router.get("/", authMiddleware, async (req, res) => {
             ultimaLlamada: l.llamadas[0] ?? null,
           }]))
         );
+        // Quien ya compro antes se marca para que la vendedora lo sepa al
+        // abrir la llamada, no a la mitad.
+        const recurrentes = await marcarRecurrentes(prisma, visibles, req.user.tenantId);
         const limpios = visibles.map((l, i) => {
           const { _count, llamadas, ...lead } = l;
-          return { ...lead, ...descripciones[i] };
+          return { ...lead, ...descripciones[i], recurrente: recurrentes.has(l.id) };
         });
         return ocultarTelefonoLeads(limpios, req.user);
       })(),

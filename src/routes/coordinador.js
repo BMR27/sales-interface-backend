@@ -18,6 +18,7 @@ const { LEAD_STATUSES_ABIERTOS, LEAD_STATUSES_CERRADOS } = require("../lib/leadS
 const { grupoDe, agrupar, esNuevoDeHoy, motivoDeAtraso } = require("../lib/colaCoordinacion");
 const { contextoDeAsignacion, asignacionesDeHoy } = require("../lib/historialAsignaciones");
 const { registrarAsignacion } = require("../lib/cicloLead");
+const { marcarRecurrentes } = require("../lib/clienteRecurrente");
 
 router.use(authMiddleware, coordinacionMiddleware);
 
@@ -402,6 +403,11 @@ router.get("/leads", async (req, res) => {
     const ahora = new Date();
     const hoy = diaLocal(ahora);
 
+    // Quien ya compro antes. Importa tanto al repartir como al llamar: un
+    // cliente recurrente conviene dárselo a alguien con turno suficiente
+    // para atenderlo bien, no al final de la jornada.
+    const recurrentes = await marcarRecurrentes(prisma, leads, req.user.tenantId);
+
     const enriquecidos = leads.map((l, i) => {
       const { _count, llamadas, ...lead } = l;
       const intentos = _count.llamadas;
@@ -418,6 +424,7 @@ router.get("/leads", async (req, res) => {
         atraso: motivoDeAtraso(lead, { ahora, alertaAtrasoMin: params.alertaAtrasoMin }),
         ultimaVendedora: ctx.ultimaVendedora,
         asignadasHoy: ctx.asignadasHoy,
+        recurrente: recurrentes.has(l.id),
       };
     });
 
