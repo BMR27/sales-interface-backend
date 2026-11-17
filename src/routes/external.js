@@ -8,7 +8,7 @@ const { buscarBloqueo } = require("../lib/numeroBloqueado");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
 const { crearAviso } = require("../lib/avisos");
 const { detallarMovimiento } = require("../lib/auditoria");
-const { aplicarResultadoEntrega, marcarCoberturaDeLead } = require("../lib/fullvector");
+const { aplicarResultadoEntrega, marcarCoberturaDeLead, checkCoverage } = require("../lib/fullvector");
 const { recalcularQuincena } = require("../lib/comisiones");
 const { comentariosDeLead, puedeVerNotas, INCLUDE_COMENTARIOS } = require("../lib/reporteProveedor");
 const { emitir } = require("../lib/eventos");
@@ -56,6 +56,24 @@ router.get("/productos", apiKeyMiddleware, async (req, res) => {
     });
 
     res.json({ productos });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/external/coverage?zipCode=&colonia= — cobertura FullVector de un CP, autenticado por X-API-Key.
+// La misma consulta que /api/coverage/check, para integraciones sin sesión de usuario
+// (la landing de compra decide con esto si ofrece pago anticipado y cuánto cobra de envío).
+// covered: true = FullVector propio, false = fuera de cobertura (FC), null = no se pudo verificar.
+router.get("/coverage", apiKeyMiddleware, async (req, res) => {
+  try {
+    const zipCode = String(req.query.zipCode || "").trim();
+    if (!/^\d{5}$/.test(zipCode)) return res.status(400).json({ error: "zipCode de 5 dígitos requerido" });
+    const colonia = req.query.colonia ? String(req.query.colonia).trim() : undefined;
+
+    const covered = await checkCoverage(zipCode, colonia);
+    res.json({ zipCode, colonia: colonia || null, covered });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
