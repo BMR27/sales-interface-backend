@@ -20,6 +20,8 @@ const { contextoDeAsignacion, asignacionesDeHoy } = require("../lib/historialAsi
 const { registrarAsignacion } = require("../lib/cicloLead");
 const { marcarRecurrentes } = require("../lib/clienteRecurrente");
 const { ESTATUS_LABEL: TICKET_LABEL, generarTicketsDelDia, aprobar: aprobarTicket } = require("../lib/ticketsComision");
+const { planificarReparto } = require("../lib/repartoAutomatico");
+const { turnoActual } = require("../lib/turnos");
 
 router.use(authMiddleware, coordinacionMiddleware);
 
@@ -493,7 +495,106 @@ router.get("/leads", async (req, res) => {
       sinAsignar,
       enEspera,
       atrasados,
+      // Si el reparto automático está encendido. La pantalla lo usa para
+      // mostrar el botón "Ejecutar asignación": con la opción apagada, el
+      // reparto es manual y ese botón no tendría por qué estar.
+      asignacionAutomatica: params.asignacionAutomatica === true,
+      turnoActual: turnoActual(),
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/coordinador/reparto/plan
+//
+// Qué pasaría si se ejecutara el reparto ahora, SIN tocar nada. Se
+// separa de ejecutar porque repartir 90 leads a ciegas es una ruleta:
+// la coordinadora tiene que poder ver a quién le toca qué antes de que
+// ocurra, y sobre todo qué NO se reparte y por qué.
+router.get("/reparto/plan", async (req, res) => {
+  try {
+    const plan = await planificarReparto(prisma, req.user.tenantId);
+    res.json(plan);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/coordinador/reparto/ejecutar
+//
+// Aplica el plan. Se vuelve a calcular aquí en vez de recibirlo del
+// cliente: entre que se miró el plan y se apretó el botón pudo entrar un
+// lead o cerrarse otro, y aplicar una foto vieja asignaría leads que ya
+// no están libres.
+router.post("/reparto/ejecutar", async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    const plan = await planificarReparto(prisma, tenantId);
+    if (plan.error) return res.status(409).json({ error: plan.error });
+    if (plan.asignaciones.length === 0) {
+      return res.json({ ...plan, aplicadas: 0, mensaje: "No hay leads para repartir en este turno" });
+    }
+
+    const ahora = new Date();
+    const vendedoras = new Map(
+      (await prisma.user.findMany({
+        where: { id: { in: [...new Set(plan.asignaciones.map((a) => a.vendedorId))] }, tenantId },
+        select: { id: true, nombre: true },
+      })).map((v) => [v.id, v])
+    );
+
+    let aplicadas = 0;
+    // Una transacción por lead y no una sola para todo: con 90 leads, un
+    // fallo a la mitad dejaría sin repartir a las que sí se pudo, y el
+    // reparto es reanudable -- volver a ejecutarlo retoma lo que quedó.
+    for (const a of plan.asignaciones) {
+      const vendedora = vendedoras.get(a.vendedorId);
+      if (!vendedora) continue;
+      try {
+        await prisma.$transaction(async (tx) => {
+          // Se relee dentro de la transacción: si otra persona lo asignó
+          // mientras tanto, este reparto no se lo quita.
+          const lead = await tx.lead.findFirst({
+            where: { id: a.leadId, tenantId, vendedorId: null },
+            select: { id: true, nombre: true, status: true },
+          });
+          if (!lead) return;
+
+          await tx.lead.update({
+            where: { id: lead.id },
+            data: {
+              vendedorId: vendedora.id,
+              asignadoPorCoordinador: true,
+              asignadoPorId: req.user.id,
+              asignadoAt: ahora,
+              disponibleDesde: null,
+              disponibleHasta: null,
+              requiereSupervision: false,
+              requiereRevisionHorario: false,
+            },
+          });
+
+          await registrarAsignacion(tx, {
+            leadId: lead.id,
+            tenantId,
+            actor: { id: req.user.id, nombre: req.user.nombre },
+            anterior: null,
+            nuevo: { id: vendedora.id, nombre: vendedora.nombre },
+            evento: "asignada",
+            motivo: `Reparto automático (${plan.turno.toLowerCase()}): ${a.motivo}`,
+            automatico: true,
+          });
+          aplicadas += 1;
+        });
+      } catch (err) {
+        console.error("reparto automatico: fallo el lead", a.leadId, err);
+      }
+    }
+
+    res.json({ ...plan, aplicadas });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
