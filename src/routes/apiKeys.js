@@ -60,6 +60,39 @@ router.post("/", async (req, res) => {
   }
 });
 
+// PATCH /api/admin/api-keys/:id — cambia de quién es la llave.
+//
+// Existe porque el origen se podía fijar al crear la llave y no después,
+// y las llaves que ya existían quedaron sin él. Una integración que
+// cambia de dueño es rara, pero corregir un dato mal puesto no: sin esto
+// habría que borrar la llave y repartir una nueva a quien la usa.
+//
+// Solo se toca el origen. La etiqueta y la llave misma no se editan: son
+// lo que identifica la integración del otro lado.
+router.patch("/:id", async (req, res) => {
+  try {
+    const { origen } = req.body || {};
+    const limpio =
+      typeof origen === "string" && origen.trim()
+        ? origen.trim().toUpperCase().slice(0, 10)
+        : null;
+
+    const result = await prisma.apiKey.updateMany({
+      where: { id: parseInt(req.params.id), tenantId: req.user.tenantId },
+      data: { origen: limpio },
+    });
+    if (result.count === 0) return res.status(404).json({ error: "API key no encontrada" });
+
+    // Los leads que YA entraron por esta llave se quedan como estaban: su
+    // origen es un hecho del momento en que llegaron, no una etiqueta que
+    // se reescriba cada vez que alguien corrige la configuración.
+    res.json({ id: parseInt(req.params.id), origen: limpio });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
 // DELETE /api/admin/api-keys/:id — revoca (soft delete)
 router.delete("/:id", async (req, res) => {
   try {
