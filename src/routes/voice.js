@@ -20,7 +20,7 @@ router.post("/token", authMiddleware, async (req, res) => {
     const { llamadasBloqueadas } = await getParametros(req.user.tenantId);
     if (llamadasBloqueadas) {
       return res.status(403).json({
-        error: "Las llamadas están bloqueadas por administración",
+        error: "Las llamadas están pausadas temporalmente. No es un problema de tu equipo ni de tu sesión. Tu coordinadora te avisará cuando se reanuden.",
         code: "LLAMADAS_BLOQUEADAS",
       });
     }
@@ -193,11 +193,15 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
     });
 
     const AVISOS = {
-      // El interruptor de emergencia. Se dice que es a proposito y que
-      // alguien lo decidio: sin eso suena a falla del sistema y la
-      // vendedora reintenta, reporta y pierde el turno averiguando.
+      // El interruptor de emergencia.
+      //
+      // Dice que es temporal y que no es su equipo, pero NO dice quien lo
+      // decidio: senalar a administracion suena punitivo, y lo que hay
+      // que transmitir es que es deliberado, no de quien fue. Sin ese
+      // "no es tu equipo", la vendedora reintenta, revisa el microfono y
+      // acaba reportando una falla que no existe.
       llamadas_bloqueadas:
-        "Las llamadas están bloqueadas por administración en este momento. No es una falla: avisa a tu coordinadora si necesitas marcar.",
+        "Las llamadas están pausadas temporalmente. No es un problema de tu equipo. Tu coordinadora te avisará cuando se reanuden.",
       // El mas comun con diferencia: el protocolo lo devolvio a la cola
       // tras una llamada sin respuesta.
       en_cola:
