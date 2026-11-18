@@ -197,11 +197,22 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
         apellido: lastName || null,
         edad: Number.isFinite(Number(age)) && age !== "" && age != null ? Number(age) : null,
         telefono: phone,
-        // Se guarda el nombre tal cual lo manda el proveedor, a propósito:
-        // es el nombre con el que el lead llegó. Puede no coincidir con el
-        // del catálogo (el proveedor manda "Prosta Vital Men" donde el
-        // catálogo dice "Vital Men Balance") y así se decidió dejarlo.
-        producto: product,
+        // Manda el nombre del CATÁLOGO cuando se pudo enlazar.
+        //
+        // Antes se guardaba el texto del proveedor tal cual, y durante un
+        // tiempo eso fue lo correcto: era el nombre con el que el lead
+        // llegó. Dejó de serlo cuando el catálogo renombró el producto --
+        // CF sigue mandando "Prosta Vital Men" donde aquí dice "Vital Men
+        // Balance" -- porque entonces la tarjeta del lead y el panel de
+        // llamada mostraban nombres distintos del mismo artículo, y la
+        // vendedora le decía al cliente uno que no existe.
+        //
+        // El texto crudo del proveedor NO se pierde: queda en
+        // incoming_leads, que es de donde sale la conciliación y la
+        // auditoría de lo que mandó (ver scripts/auditar-productos-
+        // proveedor.js). Si no se pudo enlazar, se guarda lo que mandó:
+        // es mejor un nombre raro que ninguno.
+        producto: productoCatalogo?.nombre ?? product,
         categoria: category,
         folio,
         vendedorId: vendedor?.id ?? null,
