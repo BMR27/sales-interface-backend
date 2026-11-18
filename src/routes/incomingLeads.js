@@ -13,6 +13,13 @@ const express = require("express");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const { rangoFechas } = require("../lib/fechasLocales");
+const ExcelJS = require("exceljs");
+const { LEAD_STATUS_LABELS } = require("../lib/leadStatus");
+const { POR_CLAVE: MOTIVO_POR_CLAVE, motivoLabel } = require("../lib/motivosDescarte");
+const {
+  MORADO, VERDE, ROJO, FMT_DINERO, FMT_FECHA, FMT_PCT,
+  rematar, formato, envolver, si, colorEstatus,
+} = require("../lib/excelEstilo");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -169,6 +176,309 @@ router.get("/por-buyer", async (req, res) => {
       conBuyerId: filas.filter((f) => f.buyerId).length,
       buyers,
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+
+// GET /api/admin/incoming-leads/por-buyer/export?desde=&hasta=
+//
+// El mismo corte que la pantalla, en Excel y con lo que ahí no cabe.
+//
+// Cuatro hojas, en el orden en que se usan al sentarse a revisar con el
+// proveedor:
+//
+//   Resumen        el periodo en una página, con cada cifra definida
+//   Por comprador  la tabla de la pantalla, más fechas, orígenes y ticket
+//   Motivos        POR QUÉ se cayeron los leads de cada comprador. Es la
+//                  hoja que convierte el reporte en un reclamo: no es lo
+//                  mismo que un comprador falle por números inexistentes
+//                  que porque sus clientes no quisieron comprar
+//   Detalle        un renglón por lead, para auditar cualquier cifra
+router.get("/por-buyer/export", async (req, res) => {
+  try {
+    const fechas = rangoFechas(req.query.desde, req.query.hasta);
+
+    const filas = await prisma.incomingLead.findMany({
+      where: { tenantId: req.user.tenantId, ...(fechas ? { createdAt: fechas } : {}) },
+      orderBy: { createdAt: "asc" },
+      select: {
+        buyerId: true, folio: true, consumerName: true, phone: true, product: true,
+        status: true, errorMessage: true, createdAt: true,
+        apiKey: { select: { label: true } },
+        assignedLead: {
+          select: {
+            folioPS: true, status: true, motivoDescarte: true, motivoDescarteNota: true,
+            state: true, createdAt: true,
+            vendedor: { select: { nombre: true } },
+            venta: { select: { monto: true, cancelada: true, entregaExitosa: true } },
+            _count: { select: { llamadas: true } },
+          },
+        },
+      },
+    });
+
+    // --- Agregado por comprador ---
+    const porBuyer = new Map();
+    const motivosPorBuyer = new Map();
+
+    for (const f of filas) {
+      const clave = f.buyerId || "";
+      if (!porBuyer.has(clave)) {
+        porBuyer.set(clave, {
+          buyerId: f.buyerId || null,
+          enviados: 0, noAsignados: 0, pendientes: 0, vendidos: 0, descartados: 0,
+          monto: 0, llamadas: 0,
+          origenes: new Set(), primero: f.createdAt, ultimo: f.createdAt,
+        });
+        motivosPorBuyer.set(clave, new Map());
+      }
+      const b = porBuyer.get(clave);
+      b.enviados += 1;
+      if (f.apiKey?.label) b.origenes.add(f.apiKey.label);
+      if (f.createdAt < b.primero) b.primero = f.createdAt;
+      if (f.createdAt > b.ultimo) b.ultimo = f.createdAt;
+
+      const l = f.assignedLead;
+      if (f.status === "FAILED" || !l) {
+        if (f.status === "FAILED") b.noAsignados += 1;
+        else b.pendientes += 1;
+        continue;
+      }
+      b.llamadas += l._count?.llamadas ?? 0;
+
+      if (l.status === "VENTA") {
+        b.vendidos += 1;
+        if (l.venta && !l.venta.cancelada) b.monto += l.venta.monto;
+      } else if (l.status === "DESCARTADO" || l.status === "NO_CONCRETADO") {
+        b.descartados += 1;
+        const clv = l.motivoDescarte || "(sin motivo)";
+        const m = motivosPorBuyer.get(clave);
+        m.set(clv, (m.get(clv) || 0) + 1);
+      } else {
+        b.pendientes += 1;
+      }
+    }
+
+    const buyers = [...porBuyer.entries()]
+      .map(([clave, b]) => ({
+        clave,
+        ...b,
+        origenes: [...b.origenes],
+        conversion: b.enviados > 0 ? b.vendidos / b.enviados : 0,
+        ticket: b.vendidos > 0 ? b.monto / b.vendidos : 0,
+      }))
+      .sort((a, b) => b.vendidos - a.vendidos || b.enviados - a.enviados);
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "Perfect Sales";
+    wb.created = new Date();
+
+    // ---------------- Hoja 1: Resumen ----------------
+    const resumen = wb.addWorksheet("Resumen");
+    resumen.columns = [
+      { header: "Indicador", key: "k", width: 40 },
+      { header: "Valor", key: "v", width: 18 },
+      { header: "Cómo se mide", key: "n", width: 76 },
+    ];
+    const totalEnviados = filas.length;
+    const conBuyer = filas.filter((f) => f.buyerId).length;
+    const totVendidos = buyers.reduce((s, b) => s + b.vendidos, 0);
+    const totDescartados = buyers.reduce((s, b) => s + b.descartados, 0);
+    const totMonto = buyers.reduce((s, b) => s + b.monto, 0);
+    const identificados = buyers.filter((b) => b.buyerId);
+
+    const R = [];
+    const add = (k, v, n, o = {}) => R.push({ k, v, n, ...o });
+    add("Periodo", fechas ? `${req.query.desde || "inicio"} al ${req.query.hasta || "hoy"}` : "Todo el histórico",
+      "Por fecha de recepción del lead.");
+    add("", "", "");
+    add("LO QUE LLEGÓ", "", "", { seccion: true });
+    add("Envíos recibidos", totalEnviados, "Registros que entraron por la API en el periodo.");
+    add("Traen buyerId", conBuyer, "Los que el proveedor identificó. Sin este campo no se puede saber de qué comprador vino el lead.");
+    add("Sin identificar", totalEnviados - conBuyer,
+      "Llegaron sin buyerId. Se agrupan en una sola fila: no son de un comprador, son de ninguno.",
+      { alerta: totalEnviados - conBuyer > 0 });
+    add("Compradores identificados", identificados.length, "Cuántos buyerId distintos mandaron al menos un lead.");
+    add("", "", "");
+    add("EN QUÉ TERMINÓ", "", "", { seccion: true });
+    add("Vendidos", totVendidos, "Leads que terminaron en venta.");
+    add("Conversión global", totalEnviados ? totVendidos / totalEnviados : 0,
+      "Vendidos entre TODO lo enviado, no entre lo asignado: lo que no se pudo trabajar también dice algo de lo que mandaron.", { pct: true });
+    add("Caídos", totDescartados, "Cerrados sin venta, por descarte o por agotarse el protocolo.");
+    add("Monto vendido", totMonto, "Producto, sin envío, de las ventas no canceladas.", { dinero: true });
+    add("Ticket promedio", totVendidos ? totMonto / totVendidos : 0, "Monto entre leads vendidos.", { dinero: true });
+    add("", "", "");
+    add("QUIÉN DESTACA", "", "", { seccion: true });
+    const mejor = identificados.filter((b) => b.enviados >= 10).sort((a, b) => b.conversion - a.conversion)[0];
+    const peor = identificados.filter((b) => b.enviados >= 10).sort((a, b) => a.conversion - b.conversion)[0];
+    add("Mejor comprador", mejor ? `${mejor.buyerId} — ${(mejor.conversion * 100).toFixed(1)}%` : "—",
+      "Mayor conversión entre los que mandaron 10 o más leads. Con menos, el porcentaje no dice nada.");
+    add("Peor comprador", peor ? `${peor.buyerId} — ${(peor.conversion * 100).toFixed(1)}%` : "—",
+      "Menor conversión con el mismo mínimo de 10 leads.");
+
+    for (const f of R) {
+      const fila = resumen.addRow({ k: f.k, v: f.v, n: f.n });
+      if (f.seccion) fila.getCell("k").font = { bold: true, color: { argb: MORADO }, size: 11 };
+      if (f.dinero) fila.getCell("v").numFmt = FMT_DINERO;
+      if (f.pct) fila.getCell("v").numFmt = FMT_PCT;
+      if (f.alerta) fila.getCell("v").font = { bold: true, color: { argb: ROJO } };
+      envolver(fila, ["n"]);
+    }
+    rematar(resumen, { zebra: false, filtro: false });
+
+    // ---------------- Hoja 2: Por comprador ----------------
+    const hoja = wb.addWorksheet("Por comprador");
+    hoja.columns = [
+      { header: "Comprador (buyerId)", key: "buyer", width: 26 },
+      { header: "Origen", key: "origen", width: 34 },
+      { header: "Enviados", key: "enviados", width: 11 },
+      { header: "No entraron", key: "noAsignados", width: 13 },
+      { header: "Abiertos", key: "pendientes", width: 11 },
+      { header: "Caídos", key: "descartados", width: 10 },
+      { header: "Vendidos", key: "vendidos", width: 11 },
+      { header: "Conversión", key: "conversion", width: 12 },
+      { header: "Monto vendido", key: "monto", width: 15 },
+      { header: "Ticket promedio", key: "ticket", width: 15 },
+      { header: "Llamadas", key: "llamadas", width: 11 },
+      { header: "Llamadas por venta", key: "porVenta", width: 17 },
+      { header: "Primer envío", key: "primero", width: 17 },
+      { header: "Último envío", key: "ultimo", width: 17 },
+    ];
+
+    for (const b of buyers) {
+      const fila = hoja.addRow({
+        buyer: b.buyerId || "Sin identificar",
+        origen: b.origenes.join(", "),
+        enviados: b.enviados,
+        noAsignados: b.noAsignados,
+        pendientes: b.pendientes,
+        descartados: b.descartados,
+        vendidos: b.vendidos,
+        conversion: b.conversion,
+        monto: b.monto,
+        ticket: b.ticket,
+        llamadas: b.llamadas,
+        porVenta: b.vendidos > 0 ? Math.round((b.llamadas / b.vendidos) * 10) / 10 : "",
+        primero: b.primero,
+        ultimo: b.ultimo,
+      });
+      fila.getCell("conversion").numFmt = FMT_PCT;
+      formato(fila, ["monto", "ticket"], FMT_DINERO);
+      formato(fila, ["primero", "ultimo"], FMT_FECHA);
+      if (!b.buyerId) fila.getCell("buyer").font = { italic: true, color: { argb: "FF6B7280" } };
+      if (b.vendidos > 0) fila.getCell("vendidos").font = { bold: true, color: { argb: VERDE } };
+      if (b.noAsignados > 0) fila.getCell("noAsignados").font = { bold: true, color: { argb: ROJO } };
+    }
+
+    const tot = hoja.addRow({
+      buyer: "TOTAL",
+      enviados: totalEnviados,
+      noAsignados: buyers.reduce((s, b) => s + b.noAsignados, 0),
+      pendientes: buyers.reduce((s, b) => s + b.pendientes, 0),
+      descartados: totDescartados,
+      vendidos: totVendidos,
+      conversion: totalEnviados ? totVendidos / totalEnviados : 0,
+      monto: totMonto,
+      ticket: totVendidos ? totMonto / totVendidos : 0,
+      llamadas: buyers.reduce((s, b) => s + b.llamadas, 0),
+    });
+    tot.font = { bold: true };
+    tot.getCell("conversion").numFmt = FMT_PCT;
+    formato(tot, ["monto", "ticket"], FMT_DINERO);
+    rematar(hoja);
+
+    // ---------------- Hoja 3: Motivos por comprador ----------------
+    const mot = wb.addWorksheet("Motivos por comprador");
+    mot.columns = [
+      { header: "Comprador (buyerId)", key: "buyer", width: 26 },
+      { header: "Motivo de caída", key: "motivo", width: 34 },
+      { header: "Clave", key: "clave", width: 22 },
+      { header: "Leads", key: "total", width: 9 },
+      { header: "% de sus caídas", key: "pct", width: 15 },
+      { header: "¿Culpa del proveedor?", key: "culpa", width: 20 },
+      { header: "Qué significa", key: "ayuda", width: 60 },
+    ];
+
+    for (const b of buyers) {
+      const m = motivosPorBuyer.get(b.clave);
+      if (!m || m.size === 0) continue;
+      const total = [...m.values()].reduce((s, n) => s + n, 0);
+      for (const [clave, n] of [...m.entries()].sort((a, b2) => b2[1] - a[1])) {
+        const def = MOTIVO_POR_CLAVE[clave];
+        const fila = mot.addRow({
+          buyer: b.buyerId || "Sin identificar",
+          motivo: clave === "(sin motivo)" ? "Sin motivo capturado" : motivoLabel(clave),
+          clave,
+          total: n,
+          pct: total ? n / total : 0,
+          culpa: def ? si(def.culpaDelProveedor) : "",
+          ayuda: def?.ayuda || "",
+        });
+        fila.getCell("pct").numFmt = FMT_PCT;
+        envolver(fila, ["ayuda"]);
+        if (def?.culpaDelProveedor) fila.getCell("culpa").font = { bold: true, color: { argb: ROJO } };
+      }
+    }
+    if (mot.rowCount === 1) mot.addRow({ buyer: "Ningún lead del periodo se ha caído todavía." });
+    rematar(mot);
+
+    // ---------------- Hoja 4: Detalle ----------------
+    const det = wb.addWorksheet("Detalle");
+    det.columns = [
+      { header: "Comprador (buyerId)", key: "buyer", width: 24 },
+      { header: "Folio proveedor", key: "folio", width: 16 },
+      { header: "Folio PS", key: "folioPS", width: 13 },
+      { header: "Recibido", key: "recibido", width: 17 },
+      { header: "Origen", key: "origen", width: 30 },
+      { header: "¿Entró?", key: "entro", width: 10 },
+      { header: "Por qué no entró", key: "error", width: 34 },
+      { header: "Estatus", key: "estatus", width: 16 },
+      { header: "Motivo de caída", key: "motivo", width: 28 },
+      { header: "Nota del motivo", key: "nota", width: 34 },
+      { header: "Vendedora", key: "vendedora", width: 20 },
+      { header: "Llamadas", key: "llamadas", width: 10 },
+      { header: "Cliente", key: "cliente", width: 24 },
+      { header: "Producto", key: "producto", width: 22 },
+      { header: "Estado", key: "estado", width: 18 },
+      { header: "Monto", key: "monto", width: 13 },
+    ];
+
+    for (const f of filas) {
+      const l = f.assignedLead;
+      const fila = det.addRow({
+        buyer: f.buyerId || "Sin identificar",
+        folio: f.folio,
+        folioPS: l?.folioPS || "",
+        recibido: f.createdAt,
+        origen: f.apiKey?.label || "",
+        entro: l ? "Sí" : "No",
+        error: f.errorMessage || "",
+        estatus: l ? LEAD_STATUS_LABELS[l.status] || l.status : `No ingresó (${f.status})`,
+        motivo: l?.motivoDescarte ? motivoLabel(l.motivoDescarte) : "",
+        nota: l?.motivoDescarteNota || "",
+        vendedora: l?.vendedor?.nombre || "",
+        llamadas: l ? l._count?.llamadas ?? 0 : "",
+        cliente: f.consumerName,
+        producto: f.product,
+        estado: l?.state || "",
+        monto: l?.venta && !l.venta.cancelada ? l.venta.monto : "",
+      });
+      fila.getCell("recibido").numFmt = FMT_FECHA;
+      fila.getCell("monto").numFmt = FMT_DINERO;
+      envolver(fila, ["error", "nota"]);
+      if (l) fila.getCell("estatus").font = { bold: true, color: { argb: colorEstatus(l.status) } };
+      else fila.getCell("entro").font = { bold: true, color: { argb: ROJO } };
+    }
+    rematar(det);
+
+    const nombre = `por_comprador_${req.query.desde || "inicio"}_a_${req.query.hasta || "hoy"}.xlsx`;
+    const buffer = await wb.xlsx.writeBuffer();
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombre}"`);
+    res.send(Buffer.from(buffer));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
