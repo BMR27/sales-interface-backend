@@ -32,6 +32,25 @@ const DEFINICION = {
   // Grabar llamadas nace apagado a proposito: es una decision legal de cada
   // empresa (aviso de privacidad, consentimiento del cliente, cuanto tiempo
   // se conserva el audio), no algo que el sistema deba dar por hecho.
+  // Interruptor de emergencia: nadie puede marcar.
+  //
+  // Existe para los casos en que hay que parar YA -- una caída del
+  // proveedor de telefonía, un problema con la base de leads, una orden
+  // de dirección -- sin tener que desactivar usuarios uno por uno ni
+  // apagar el servicio entero, que dejaría a la operación sin poder ni
+  // consultar.
+  //
+  // Lo que bloquea: marcar. Lo que NO: entrar, ver leads, capturar
+  // resultados o cerrar ventas en curso. Es un freno a la salida de
+  // llamadas, no una suspensión del trabajo.
+  llamadasBloqueadas: {
+    tipo: "boolean",
+    default: false,
+    label: "Bloquear la salida de llamadas",
+    ayuda:
+      "Impide que CUALQUIER rol marque, incluidas coordinacion y administracion. Lo demas sigue funcionando: se puede entrar, ver leads y registrar resultados. Se levanta desde aqui mismo.",
+    grupo: "Llamadas",
+  },
   grabacionLlamadas: {
     tipo: "boolean",
     default: false,

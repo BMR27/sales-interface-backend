@@ -9,8 +9,22 @@ const router = express.Router();
 const prisma = require("../lib/prisma");
 
 // POST /api/voice/token — el vendedor obtiene un Access Token para el Twilio Device del navegador
-router.post("/token", authMiddleware, (req, res) => {
+router.post("/token", authMiddleware, async (req, res) => {
   try {
+    // Interruptor de emergencia. Sin token, el Device del navegador no se
+    // registra y no hay forma de marcar desde la aplicacion.
+    //
+    // Se responde 403 con el motivo y no un error generico: quien llama
+    // tiene que poder distinguir "esto esta apagado a proposito" de "algo
+    // se rompio", o va a reintentar y a reportar una falla que no existe.
+    const { llamadasBloqueadas } = await getParametros(req.user.tenantId);
+    if (llamadasBloqueadas) {
+      return res.status(403).json({
+        error: "Las llamadas están bloqueadas por administración",
+        code: "LLAMADAS_BLOQUEADAS",
+      });
+    }
+
     const identity = `vendedor_${req.user.id}`;
     const token = generateVoiceToken(identity);
     res.json({ token });
@@ -70,6 +84,17 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
       const params = await getParametros(vendedor.tenantId);
       grabar = params.grabacionLlamadas;
 
+      // El segundo corte del interruptor de emergencia.
+      //
+      // No basta con dejar de emitir tokens: un Access Token ya entregado
+      // sigue siendo valido un buen rato, asi que quien tuviera la pestaña
+      // abierta podria seguir marcando despues de que alguien aprieta el
+      // freno. Aqui se corta el dial en si -- lo que de verdad hace la
+      // llamada -- y por eso el bloqueo surte efecto al instante.
+      if (params.llamadasBloqueadas) {
+        motivoFallo = "llamadas_bloqueadas";
+      } else {
+
       // La vendedora solo puede marcarle a sus leads. La coordinadora, a
       // cualquiera de su empresa: ensenar a llamar es parte de su trabajo
       // (ver filtroLead en src/routes/llamada.js). En los dos casos el
@@ -108,6 +133,7 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
         else motivoFallo = "reasignado";
       } else if (lead && !lead.telefono) {
         motivoFallo = "sin_telefono";
+      }
       }
 
       // El intento queda registrado SIEMPRE, se grabe o no: el historial de
@@ -167,6 +193,11 @@ router.post("/twiml", twilioSignatureMiddleware, async (req, res) => {
     });
 
     const AVISOS = {
+      // El interruptor de emergencia. Se dice que es a proposito y que
+      // alguien lo decidio: sin eso suena a falla del sistema y la
+      // vendedora reintenta, reporta y pierde el turno averiguando.
+      llamadas_bloqueadas:
+        "Las llamadas están bloqueadas por administración en este momento. No es una falla: avisa a tu coordinadora si necesitas marcar.",
       // El mas comun con diferencia: el protocolo lo devolvio a la cola
       // tras una llamada sin respuesta.
       en_cola:
