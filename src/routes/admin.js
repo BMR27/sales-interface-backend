@@ -320,7 +320,25 @@ router.get("/leads", async (req, res) => {
     const [leads, porStatus, sinAsignar, enEspera] = await Promise.all([
       prisma.lead.findMany({
         where,
-        orderBy: { updatedAt: "desc" },
+      orderBy: [
+        // El orden de la lista, y es el mismo en los tres roles.
+        //
+        // 1. `status` asc apoya en el orden del enum LeadStatus -- NUEVO,
+        //    REAGENDADO, DESCARTADO, VENTA, NO_CONCRETADO -- asi que los
+        //    abiertos salen antes que los cerrados. SI ALGUIEN REORDENA
+        //    ESE ENUM, este listado cambia sin avisar.
+        // 2. Sin llamadas primero: dentro de los nuevos, el que nadie ha
+        //    tocado es el que hay que repartir ya.
+        // 3. Y entre iguales, el mas reciente arriba.
+        //
+        // Antes era `updatedAt desc`, que ordenaba por ultima
+        // modificacion: un descartado que alguien toco hace un rato
+        // quedaba por encima de un lead recien llegado, y los verdes --
+        // los que hay que asignar de inmediato -- aparecian al fondo.
+        { status: "asc" },
+        { llamadas: { _count: "asc" } },
+        { createdAt: "desc" },
+      ],
         include: {
           vendedor: { select: { id: true, nombre: true, email: true } },
           // El administrador necesita el mismo semaforo y los mismos

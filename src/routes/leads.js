@@ -76,7 +76,20 @@ router.get("/", authMiddleware, async (req, res) => {
       ? []
       : await prisma.lead.findMany({
           where,
-          orderBy: { updatedAt: "desc" },
+          // Mismo orden que en admin y en la cola de la coordinadora: lo
+          // nuevo y sin llamar arriba. Antes era `updatedAt desc`, asi
+          // que un lead tocado hace un rato tapaba al que acababa de
+          // llegar -- justo el que hay que atender primero mientras el
+          // cliente todavia recuerda haber dejado sus datos.
+          //
+          // `status` asc se apoya en el orden del enum LeadStatus; este
+          // feed ya solo trae abiertos, asi que decide entre NUEVO y
+          // REAGENDADO.
+          orderBy: [
+            { status: "asc" },
+            { llamadas: { _count: "asc" } },
+            { createdAt: "desc" },
+          ],
           include: {
             // La vendedora ve el mismo semaforo que su coordinadora: cuales no
             // ha tocado, cuales ya trabajo y cuanto le queda a cada uno.
