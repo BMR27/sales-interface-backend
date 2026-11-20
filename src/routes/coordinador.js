@@ -404,11 +404,30 @@ router.get("/leads", async (req, res) => {
       prisma.lead.findMany({
         where: whereTrabajo,
         // El orden fino lo pone src/lib/colaCoordinacion.js, que agrupa por
-        // sección y ordena dentro de cada una. Este `orderBy` solo decide
-        // QUÉ 100 leads se traen cuando hay más: los más antiguos, que son
-        // los que están por perderse.
-        orderBy: [{ vendedorId: { sort: "asc", nulls: "first" } }, { createdAt: "asc" }],
-        take: 100,
+        // sección y ordena dentro de cada una. Este `orderBy` decide QUÉ
+        // leads se traen cuando hay más que el tope, y eso resultó ser
+        // decisivo:
+        //
+        // Traía los más antiguos (`createdAt asc`). Con 182 repartibles y
+        // un tope de 100, el corte llegaba hasta el 18 de noviembre y
+        // DEJABA FUERA los 32 leads nuevos de hoy. La sección "Nuevos
+        // leads" no salía vacía por un error de agrupado: es que esos
+        // leads no llegaban a la pantalla. La coordinadora no podía
+        // repartir lo único que hay que repartir de inmediato.
+        //
+        // Ahora los que no tienen llamadas entran SIEMPRE, y el resto del
+        // cupo se llena con los que llevan más esperando, que era la
+        // intención original.
+        orderBy: [
+          { llamadas: { _count: "asc" } },
+          { vendedorId: { sort: "asc", nulls: "first" } },
+          { createdAt: "asc" },
+        ],
+        // El tope sube de 100 a 300 para que quepa la cola completa: hoy
+        // son 182 y con 100 se ocultaba un tercio de lo repartible sin
+        // decirlo en ninguna parte. Si algún día no alcanza, lo que falta
+        // es paginar, no volver a recortar en silencio.
+        take: 300,
         include: incluir,
       }),
       // Los cierres: los más recientes y pocos. Van al final de la cola y
