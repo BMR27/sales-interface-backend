@@ -4,7 +4,7 @@
 //
 // Config (Railway > Variables):
 //   RESEND_API_KEY   la key de Resend (empieza con re_)
-//   MAIL_FROM        remitente, p.ej. "PerfectSelft <notificaciones@perfectselft.com>"
+//   MAIL_FROM        remitente, p.ej. "PerfectSelf <notificaciones@perfectself.com.mx>"
 //                    el dominio debe estar verificado en Resend
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 

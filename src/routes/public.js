@@ -14,7 +14,7 @@ router.get("/branding", async (req, res) => {
     const host = String(req.query.host || "").toLowerCase().trim();
     if (!host) return res.json({ tenant: null });
 
-    // www.perfectselft.com y perfectselft.com son el mismo sitio, pero el
+    // www.perfectself.com.mx y perfectself.com.mx son el mismo sitio, pero el
     // dominio se guarda tal cual lo escribió el admin: comparar el string
     // exacto hacía que entrar sin www cayera en { tenant: null } y la pantalla
     // de login mostrara la marca de la plataforma en vez de la del tenant.
