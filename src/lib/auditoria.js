@@ -59,6 +59,7 @@ const CATALOGO = [
   ["POST /api/llamada/:id/confirmar", "llamada.confirmar", "Llamada", "Registró el resultado de una llamada"],
   ["POST /api/llamada/:id/reagendar", "llamada.reagendar", "Llamada", "Reagendó una llamada (Re-Llamar)"],
   ["POST /api/ganancias/venta", "venta.registrar", "Venta", "Registró una venta"],
+  ["POST /api/external/ventas-prepagadas", "venta.prepagada_api", "Venta", "Registró una venta pagada en línea"],
   ["POST /api/admin/leads/bulk", "lead.importar", "Lead", "Importó leads en lote"],
   ["PUT /api/admin/leads/:id/asignar", "lead.reasignar", "Lead", "Reasignó un lead a otra vendedora"],
   ["POST /api/admin/usuarios", "usuario.crear", "Usuario", "Dio de alta a un usuario"],

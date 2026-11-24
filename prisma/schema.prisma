@@ -564,6 +564,16 @@ model Venta {
   fecha                DateTime  @default(now())
   createdAt            DateTime  @default(now())
 
+  // Venta pagada en línea antes del envío (landing con Stripe): FullVector
+  // recibe la orden con orderValue 0 -- el mensajero no cobra nada -- y la
+  // venta no genera comisión para nadie (ver cuentaParaComision).
+  prepagada      Boolean @default(false)
+  sinComision    Boolean @default(false)
+  pagoProveedor  String?
+  pagoReferencia String?
+  pagadoAt       DateTime?
+  comprobanteUrl String?
+
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
