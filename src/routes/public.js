@@ -21,9 +21,30 @@ router.get("/branding", async (req, res) => {
     const hostSinWww = host.replace(/^www\./, "");
     const candidatos = [host, hostSinWww, `www.${hostSinWww}`];
 
-    let tenant = await prisma.tenant.findFirst({
-      where: { dominioPersonalizado: { in: candidatos }, status: "ACTIVO" },
+    // `dominioPersonalizado` admite VARIOS dominios separados por coma.
+    //
+    // Hace falta al cambiar de dominio: durante la transición conviven el
+    // viejo, por el que sigue entrando el equipo, y el nuevo. Con un solo
+    // valor había que elegir cuál conserva la marca, y el otro mostraba el
+    // branding genérico de la plataforma como si fuera otra empresa.
+    //
+    // Se compara en memoria y no en la consulta porque son pocos espacios
+    // y la alternativa -- un `contains` sobre el campo -- haría que
+    // "self.com" casara con "perfectself.com", que es peor que el
+    // problema que resuelve.
+    const activos = await prisma.tenant.findMany({
+      where: { status: "ACTIVO", dominioPersonalizado: { not: null } },
     });
+
+    let tenant =
+      activos.find((t) =>
+        String(t.dominioPersonalizado || "")
+          .toLowerCase()
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean)
+          .some((d) => candidatos.includes(d))
+      ) || null;
 
     if (!tenant) {
       const rootDomain = String(process.env.ROOT_DOMAIN || "").toLowerCase().trim();
