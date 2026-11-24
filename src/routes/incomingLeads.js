@@ -183,7 +183,7 @@ router.get("/por-buyer", async (req, res) => {
 });
 
 
-// GET /api/admin/incoming-leads/por-buyer/export?desde=&hasta=
+// GET /api/admin/incoming-leads/por-buyer/export?desde=&hasta=&buyerId=
 //
 // El mismo corte que la pantalla, en Excel y con lo que ahí no cabe.
 //
@@ -201,8 +201,30 @@ router.get("/por-buyer/export", async (req, res) => {
   try {
     const fechas = rangoFechas(req.query.desde, req.query.hasta);
 
+    // Filtro por comprador. Tres casos, y el tercero importa:
+    //
+    //   sin parametro   todos los compradores
+    //   "4195"          solo ese
+    //   "SIN_ID"        los que llegaron SIN buyerId, que hoy son la
+    //                   mitad de lo recibido y no se podian aislar --
+    //                   justo el grupo del que mas hay que hablar con el
+    //                   proveedor.
+    //
+    // Se usa un centinela y no una cadena vacia porque `?buyerId=` vacio
+    // y "no mandes el parametro" son indistinguibles en una query.
+    const buyerPedido = typeof req.query.buyerId === "string" ? req.query.buyerId.trim() : "";
+    const filtroBuyer = !buyerPedido
+      ? {}
+      : buyerPedido === "SIN_ID"
+        ? { OR: [{ buyerId: null }, { buyerId: "" }] }
+        : { buyerId: buyerPedido };
+
     const filas = await prisma.incomingLead.findMany({
-      where: { tenantId: req.user.tenantId, ...(fechas ? { createdAt: fechas } : {}) },
+      where: {
+        tenantId: req.user.tenantId,
+        ...(fechas ? { createdAt: fechas } : {}),
+        ...filtroBuyer,
+      },
       orderBy: { createdAt: "asc" },
       select: {
         buyerId: true, folio: true, consumerName: true, phone: true, product: true,
@@ -294,6 +316,16 @@ router.get("/por-buyer/export", async (req, res) => {
     const add = (k, v, n, o = {}) => R.push({ k, v, n, ...o });
     add("Periodo", fechas ? `${req.query.desde || "inicio"} al ${req.query.hasta || "hoy"}` : "Todo el histórico",
       "Por fecha de recepción del lead.");
+    // Si el reporte está filtrado hay que decirlo arriba: sin esta línea,
+    // un archivo de un solo comprador se lee como si fuera el total del
+    // periodo y las cifras se citan mal.
+    if (buyerPedido) {
+      add(
+        "Filtrado por comprador",
+        buyerPedido === "SIN_ID" ? "Solo los que llegaron sin buyerId" : buyerPedido,
+        "Este archivo NO incluye al resto de los compradores del periodo."
+      );
+    }
     add("", "", "");
     add("LO QUE LLEGÓ", "", "", { seccion: true });
     add("Envíos recibidos", totalEnviados, "Registros que entraron por la API en el periodo.");
@@ -474,7 +506,8 @@ router.get("/por-buyer/export", async (req, res) => {
     }
     rematar(det);
 
-    const nombre = `por_comprador_${req.query.desde || "inicio"}_a_${req.query.hasta || "hoy"}.xlsx`;
+    const quien = buyerPedido ? `_${buyerPedido.replace(/[^\w.-]/g, "")}` : "";
+    const nombre = `por_comprador${quien}_${req.query.desde || "inicio"}_a_${req.query.hasta || "hoy"}.xlsx`;
     const buffer = await wb.xlsx.writeBuffer();
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${nombre}"`);
