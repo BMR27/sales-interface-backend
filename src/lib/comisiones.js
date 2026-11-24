@@ -60,7 +60,8 @@ function piezasPagadas(venta) {
 // Una venta sólo entra al acumulado cuando la entrega está confirmada y no
 // está cancelada. Mientras tanto la pieza existe pero no se paga.
 function cuentaParaComision(venta) {
-  return venta.entregaExitosa === true && venta.cancelada !== true;
+  // Las ventas en línea (prepagadas en la landing) no pagan comisión a nadie.
+  return venta.entregaExitosa === true && venta.cancelada !== true && venta.sinComision !== true;
 }
 
 const INCLUDE_PIEZAS = { lead: { select: { cantidad: true, items: { select: { cantidad: true, esRegalo: true } } } } };
@@ -104,9 +105,11 @@ async function calcularQuincenaVendedora(tenantId, vendedorId, fechaRef, params)
       cuenta: valida,
       motivoNoCuenta: valida
         ? null
-        : venta.cancelada
-          ? "Cancelada o devuelta"
-          : "Entrega sin confirmar",
+        : venta.sinComision
+          ? "Venta en línea (sin comisión)"
+          : venta.cancelada
+            ? "Cancelada o devuelta"
+            : "Entrega sin confirmar",
       acumuladas,
       comisionNueva: nueva,
       comisionAcumulada: pagado,

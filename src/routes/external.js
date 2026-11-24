@@ -13,6 +13,7 @@ const { aplicarResultadoEntrega, marcarCoberturaDeLead, checkCoverage } = requir
 const { recalcularQuincena } = require("../lib/comisiones");
 const { comentariosDeLead, puedeVerNotas, INCLUDE_COMENTARIOS } = require("../lib/reporteProveedor");
 const { emitir } = require("../lib/eventos");
+const { registrarVentaPrepagada, VentaPrepagadaError } = require("../lib/ventaPrepagada");
 const {
   LEAD_STATUSES,
   LEAD_STATUS_LABELS,
@@ -306,6 +307,40 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       assignedTo: vendedor ? { id: vendedor.id, nombre: vendedor.nombre } : null,
     });
   } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// POST /api/external/ventas-prepagadas — pedido ya pagado en línea (landing
+// PerfectSelf con Stripe). Entra directo como venta concretada a nombre de
+// "Tienda en línea", sin comisión, y su orden va a FullVector con cobro $0.
+// Idempotente por folio: reintentar con el mismo folio devuelve la misma venta.
+// Solo las llaves autorizadas (VENTAS_PREPAGADAS_API_KEY_IDS, ids separados
+// por coma): una venta prepagada sale a FullVector SIN cobro, así que un
+// proveedor de leads cualquiera no debe poder crearla.
+const llavesVentaPrepagada = () =>
+  new Set(String(process.env.VENTAS_PREPAGADAS_API_KEY_IDS || "").split(",").map((s) => s.trim()).filter(Boolean));
+
+router.post("/ventas-prepagadas", apiKeyMiddleware, async (req, res) => {
+  try {
+    if (!llavesVentaPrepagada().has(String(req.apiKey.id))) {
+      return res.status(403).json({ error: "Esta API key no puede registrar ventas prepagadas" });
+    }
+    const tenantId = req.apiKey.tenantId;
+    const r = await registrarVentaPrepagada(req.body, { tenantId, apiKey: req.apiKey });
+    if (!r.existente) {
+      detallarMovimiento(req, {
+        entidadId: r.leadId,
+        descripcion: `Venta en línea ${r.folio} (${r.lead.nombre}) pagada y registrada como concretada`,
+        despues: { folio: r.folio, folioPS: r.folioPS, monto: req.body?.monto, vendedor: r.tienda.nombre, fullvector: r.fullvector.status },
+      });
+      emitir(tenantId, "venta.cerrada", { leadId: r.leadId, monto: req.body?.monto });
+    }
+    const { lead, tienda, ...publico } = r;
+    res.status(r.existente ? 200 : 201).json(publico);
+  } catch (err) {
+    if (err instanceof VentaPrepagadaError) return res.status(err.status).json({ error: err.message });
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
   }

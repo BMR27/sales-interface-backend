@@ -190,15 +190,23 @@ async function notificarVentaSinCobertura(venta, lead, { vendedor = null } = {})
       .join(", ");
     const total = venta.monto + (venta.costoEnvio || 0);
     const enlace = process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/prepago` : null;
+    // Pagada en línea: el dinero ya entró, solo falta mandarla por mensajería tradicional.
+    const pagada = venta.prepagada === true;
+    const titulo = pagada
+      ? "Venta pagada en línea fuera de cobertura: hay que enviarla por mensajería tradicional"
+      : "Venta fuera de cobertura: hay que cobrarla por transferencia";
+    const instruccion = pagada
+      ? "El cliente ya pagó en línea. Solo hay que enviar el paquete por mensajería tradicional."
+      : "Hay que llamar al cliente, ofrecerle transferencia y, una vez confirmada, enviar por mensajería tradicional.";
 
     await sendMail({
       to: config.destinatarios,
-      subject: `Venta sin cobertura (prepago): ${venta.folio || `#${venta.id}`} — ${lead?.nombre || "cliente"}`,
+      subject: `${pagada ? "Venta pagada en línea sin cobertura" : "Venta sin cobertura (prepago)"}: ${venta.folio || `#${venta.id}`} — ${lead?.nombre || "cliente"}`,
       html: `<div style="${ESTILO_BASE};max-width:560px">
-        <h2 style="margin:0 0 4px;font-size:18px">Venta fuera de cobertura: hay que cobrarla por transferencia</h2>
+        <h2 style="margin:0 0 4px;font-size:18px">${titulo}</h2>
         <p style="margin:0 0 20px;color:#6b7280;font-size:13px">
           En el CP ${lead?.zipCode || "(sin CP)"} la mensajería no ofrece pago en efectivo contra entrega.
-          Hay que llamar al cliente, ofrecerle transferencia y, una vez confirmada, enviar por mensajería tradicional.
+          ${instruccion}
         </p>
         <table style="border-collapse:collapse;width:100%">
           ${fila("Folio", venta.folio)}
@@ -206,7 +214,8 @@ async function notificarVentaSinCobertura(venta, lead, { vendedor = null } = {})
           ${fila("Teléfono", lead?.telefono)}
           ${fila("Producto", lead?.producto)}
           ${fila("Dirección", direccion)}
-          ${fila("Total a cobrar", `$${Math.round(total).toLocaleString("es-MX")}`)}
+          ${fila(pagada ? "Total pagado" : "Total a cobrar", `$${Math.round(total).toLocaleString("es-MX")}`)}
+          ${fila("Comprobante", venta.comprobanteUrl)}
           ${fila("Vendedora", vendedor ? vendedor.nombre : null)}
           ${fila("ID en FullVector", venta.fullvectorOrderId)}
         </table>
@@ -215,7 +224,9 @@ async function notificarVentaSinCobertura(venta, lead, { vendedor = null } = {})
       text: [
         `Venta fuera de cobertura: ${venta.folio || `#${venta.id}`}`,
         `Cliente: ${lead?.nombre || ""} (${lead?.telefono || "sin teléfono"})`,
-        `CP ${lead?.zipCode || "?"} sin pago contra entrega: cobrar por transferencia.`,
+        pagada
+          ? `CP ${lead?.zipCode || "?"} sin pago contra entrega: ya pagado en línea, enviar por mensajería tradicional.`
+          : `CP ${lead?.zipCode || "?"} sin pago contra entrega: cobrar por transferencia.`,
         `Total: $${Math.round(total).toLocaleString("es-MX")}`,
         enlace,
       ].filter(Boolean).join("\n"),

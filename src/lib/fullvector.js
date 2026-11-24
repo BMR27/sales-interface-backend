@@ -156,7 +156,8 @@ function buildOrderPayload(lead, venta, leadItems, productos, productoCatalogo, 
     // orderValue es lo que el mensajero cobra contra-entrega (COD) --
     // incluye el costo de envío, a diferencia de `venta.monto` (solo
     // producto, base de la comisión del vendedor).
-    orderValue: venta.monto + (venta.costoEnvio || 0),
+    // Prepagada (pago en línea): ya está cobrada, el mensajero no cobra nada.
+    orderValue: venta.prepagada ? 0 : venta.monto + (venta.costoEnvio || 0),
     address: {
       recipientName: `${lead.nombre} ${lead.apellido || ""}`.trim() || DATO_FALTANTE,
       phone: lead.telefono || DATO_FALTANTE,
@@ -235,8 +236,22 @@ async function abrirGestionPrepago(venta, lead) {
     const existente = await prisma.prepagoGestion.findUnique({ where: { ventaId: venta.id } });
     if (existente) return;
 
+    // Pagada en línea: no hay nada que cobrar, solo enviar por mensajería
+    // tradicional, así que el expediente nace con el pago confirmado.
     await prisma.prepagoGestion.create({
-      data: { ventaId: venta.id, tenantId: venta.tenantId },
+      data: {
+        ventaId: venta.id,
+        tenantId: venta.tenantId,
+        ...(venta.prepagada
+          ? {
+              estado: "PAGO_CONFIRMADO",
+              pagoReferencia: [venta.pagoProveedor, venta.pagoReferencia].filter(Boolean).join(" ") || null,
+              pagoMonto: venta.monto + (venta.costoEnvio || 0),
+              pagoConfirmadoAt: venta.pagadoAt || new Date(),
+              pagoConfirmadoPor: "Pago en línea",
+            }
+          : {}),
+      },
     });
 
     const vendedor = await prisma.user.findUnique({
