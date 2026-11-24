@@ -11,7 +11,7 @@
 // no modifican nada del flujo actual.
 const express = require("express");
 const authMiddleware = require("../middleware/auth");
-const adminMiddleware = require("../middleware/admin");
+const gestionAdmin = require("../middleware/gestionAdmin");
 const { rangoFechas } = require("../lib/fechasLocales");
 const ExcelJS = require("exceljs");
 const { LEAD_STATUS_LABELS } = require("../lib/leadStatus");
@@ -24,7 +24,13 @@ const {
 const router = express.Router();
 const prisma = require("../lib/prisma");
 
-router.use(authMiddleware, adminMiddleware);
+// Lo ven los dos roles de administracion, como Leads, Ventas y Reportes.
+//
+// Antes era solo del ADMIN, y eso dejaba fuera a quien lleva la relacion
+// diaria con el proveedor: el corte por comprador es informacion de
+// operacion, no una credencial. Las API keys siguen donde estaban, en su
+// propia pantalla y solo para el ADMIN -- aqui no se muestra ninguna.
+router.use(authMiddleware, gestionAdmin);
 
 
 // GET /api/admin/incoming-leads/campos — qué campos manda realmente cada
