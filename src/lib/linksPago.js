@@ -140,7 +140,9 @@ async function crearYEnviarLink({ lead, monto, user }) {
         },
       },
     ],
-    payment_method_types: metodos,
+    // `allowed_` y no `payment_method_types`: la API de Stripe que trae el
+    // SDK (2026-11-18) quitó el segundo, y con él todos los links fallaban.
+    allowed_payment_method_types: metodos,
     payment_method_options: {
       ...(metodos.includes("oxxo") ? { oxxo: { expires_after_days: OXXO_DIAS } } : {}),
       ...(metodos.includes("customer_balance")
