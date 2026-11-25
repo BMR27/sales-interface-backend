@@ -12,7 +12,7 @@ const { siguienteFolio } = require("../lib/folios");
 const ROLES_ASIGNABLES = ["ADMIN", "ADMIN_OPERATIVO", "VENDEDOR", "COORDINADOR"];
 const { getNextVendedor } = require("../lib/assignment");
 const { parseWorkbookBuffer, validateRow, buildTemplateBuffer } = require("../lib/leadsImport");
-const { LEAD_STATUSES, LEAD_STATUSES_CERRADOS_SIN_VENTA, parseLeadStatus } = require("../lib/leadStatus");
+const { LEAD_STATUSES, LEAD_STATUSES_ABIERTOS, LEAD_STATUSES_CERRADOS_SIN_VENTA, parseLeadStatus } = require("../lib/leadStatus");
 const { inicioDeHoy, inicioDeSemana, inicioDeMes, inicioDeDia, finDeDia } = require("../lib/fechasLocales");
 const { notificarLeadsImportados } = require("../lib/notificaciones");
 const { crearAvisos } = require("../lib/avisos");
@@ -568,6 +568,8 @@ router.get("/vendedores", gestionAdmin, async (req, res) => {
       select: {
         id: true, nombre: true, email: true, rol: true, activo: true, createdAt: true,
         _count: { select: { leads: true, ventas: true } },
+        // Los que se quedarian huerfanos si se le da de baja o cambia de rol.
+        leads: { where: { status: { in: LEAD_STATUSES_ABIERTOS } }, select: { id: true } },
         ventas: { select: { monto: true } },
         apiKeysCreadas: {
           select: {
@@ -600,6 +602,7 @@ router.get("/vendedores", gestionAdmin, async (req, res) => {
         activo: u.activo,
         createdAt: u.createdAt,
         leadsCount: u._count.leads,
+        leadsAbiertos: u.leads.length,
         ventasCount: u._count.ventas,
         montoTotal: u.ventas.reduce((s, v) => s + v.monto, 0),
       };
@@ -744,22 +747,53 @@ router.post("/vendedores", adminMiddleware, async (req, res) => {
   }
 });
 
-// PUT /api/admin/vendedores/:id
+// PUT /api/admin/vendedores/:id — editar, cambiar de rol, dar de baja o
+// reactivar a alguien del espacio.
+//
+// Rol y baja tienen las mismas dos fronteras que la contraseña:
+//   - A ti mismo no: quitarte el rol o darte de baja te deja fuera a media
+//     pantalla, y si eras el unico Super Administrador, deja el espacio sin
+//     nadie que lo administre.
+//   - A otro ADMIN tampoco: bajarlo o darlo de baja es quitarle el espacio a
+//     un par. Ese cambio se hace a mano (scripts/roles-administracion.js).
+// Como ningun ADMIN puede tocar a otro ni a si mismo, el espacio nunca se
+// queda sin Super Administrador.
+//
+// El proveedor de leads no cambia de rol: su cuenta es la de un portal
+// externo con API keys, no una silla del equipo que se pueda reasignar.
 router.put("/vendedores/:id", adminMiddleware, async (req, res) => {
   try {
     const { nombre, email, rol, activo } = req.body;
     if (rol !== undefined && !ROLES_ASIGNABLES.includes(rol)) {
       return res.status(400).json({ error: "rol inválido" });
     }
+    if (activo !== undefined && typeof activo !== "boolean") {
+      return res.status(400).json({ error: "activo inválido" });
+    }
 
     const existing = await prisma.user.findFirst({ where: { id: parseInt(req.params.id), tenantId: req.user.tenantId } });
     if (!existing) return res.status(404).json({ error: "Usuario no encontrado" });
 
+    const cambiaRol = rol !== undefined && rol !== existing.rol;
+    const cambiaActivo = activo !== undefined && activo !== existing.activo;
+
+    if (cambiaRol || cambiaActivo) {
+      if (existing.id === req.user.id) {
+        return res.status(400).json({ error: "No puedes cambiar tu propio rol ni darte de baja" });
+      }
+      if (existing.rol === "ADMIN" || existing.rol === "SUPER_ADMIN") {
+        return res.status(403).json({ error: "No puedes cambiar el rol ni dar de baja a otro Super Administrador" });
+      }
+    }
+    if (cambiaRol && existing.rol === "PROVEEDOR_LEADS") {
+      return res.status(400).json({ error: "Un proveedor de leads no puede cambiar de rol" });
+    }
+
     const data = {};
     if (nombre !== undefined) data.nombre = nombre;
     if (email !== undefined) data.email = email;
-    if (rol !== undefined) data.rol = rol;
-    if (activo !== undefined) data.activo = activo;
+    if (cambiaRol) data.rol = rol;
+    if (cambiaActivo) data.activo = activo;
 
     const user = await prisma.user.update({
       where: { id: existing.id },
@@ -767,7 +801,48 @@ router.put("/vendedores/:id", adminMiddleware, async (req, res) => {
       select: { id: true, nombre: true, email: true, rol: true, activo: true },
     });
 
-    res.json(user);
+    // El rol viaja dentro del token, asi que sin cerrar la sesion el cambio
+    // no se aplicaria hasta que expirara; y una baja que deja la sesion
+    // abierta no es baja. En los dos casos vuelve a pedir login.
+    const dadoDeBaja = cambiaActivo && !activo;
+    if (dadoDeBaja || cambiaRol) {
+      await revocarSesiones(existing.id, { motivo: dadoDeBaja ? "dada_de_baja" : "cambio_de_rol" });
+    }
+
+    // Las API keys no pasan por la sesion: un proveedor dado de baja seguiria
+    // mandando leads. Al reactivarlo no se encienden solas -- se le genera
+    // una nueva, igual que si la hubiera perdido.
+    if (dadoDeBaja && existing.rol === "PROVEEDOR_LEADS") {
+      await prisma.apiKey.updateMany({
+        where: { createdByUserId: existing.id, tenantId: req.user.tenantId, active: true },
+        data: { active: false },
+      });
+    }
+
+    // Una baja no reparte sus leads abiertos: se quedan con su nombre para
+    // que quien administra decida a quien pasarlos. La pantalla avisa cuantos
+    // son antes de confirmar.
+    const leadsAbiertos = dadoDeBaja || cambiaRol
+      ? await prisma.lead.count({
+          where: { vendedorId: existing.id, tenantId: req.user.tenantId, status: { in: LEAD_STATUSES_ABIERTOS } },
+        })
+      : 0;
+
+    if (cambiaRol || cambiaActivo) {
+      const partes = [];
+      if (cambiaRol) partes.push(`cambió el rol de ${existing.nombre} de ${existing.rol} a ${rol}`);
+      if (cambiaActivo) partes.push(`${activo ? "reactivó" : "dio de baja"} a ${existing.nombre}`);
+      const descripcion = partes.join(" y ");
+      detallarMovimiento(req, {
+        entidad: "User",
+        entidadId: existing.id,
+        descripcion: descripcion.charAt(0).toUpperCase() + descripcion.slice(1),
+        antes: { rol: existing.rol, activo: existing.activo },
+        despues: { rol: user.rol, activo: user.activo },
+      });
+    }
+
+    res.json({ ...user, leadsAbiertos });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });

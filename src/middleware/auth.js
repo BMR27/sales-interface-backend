@@ -8,6 +8,8 @@ const { validarSesion } = require("../lib/sesiones");
 const MOTIVOS = {
   otro_inicio: "Tu sesión se cerró porque entraste desde otro dispositivo",
   cerrada_por_usuario: "Tu sesión fue cerrada",
+  dada_de_baja: "Tu cuenta fue dada de baja",
+  cambio_de_rol: "Tu rol cambió. Vuelve a iniciar sesión para ver tus opciones nuevas",
   expirada: "Tu sesión expiró",
   desconocida: "Tu sesión ya no es válida",
 };
