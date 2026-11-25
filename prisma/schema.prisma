@@ -683,6 +683,9 @@ model LinkPago {
   metodo String?
 
   enviadoA      String
+  // sms | whatsapp. El envío de cualquiera de los dos queda en smsSid /
+  // smsError: es el mismo mensaje de Twilio, sólo cambia el canal.
+  canal         String  @default("sms")
   smsSid        String?
   smsError      String?
   enviadoPorId     Int?

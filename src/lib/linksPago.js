@@ -16,6 +16,7 @@ const crypto = require("crypto");
 const Stripe = require("stripe");
 const prisma = require("./prisma");
 const { sendSms, isEnabled: smsEnabled } = require("./twilioSms");
+const whatsapp = require("./twilioWhatsapp");
 const { normalizePhoneNumber } = require("./twilioVoice");
 const { emitir } = require("./eventos");
 const { crearAviso } = require("./avisos");
@@ -105,6 +106,7 @@ function serializarLink(l) {
     url: l.url,
     urlCorta: urlCorta(l.id),
     enviadoA: l.enviadoA,
+    canal: l.canal || "sms",
     smsEnviado: Boolean(l.smsSid),
     smsError: l.smsError,
     enviadoPor: l.enviadoPorNombre,
@@ -187,7 +189,7 @@ function mensajeDelLink({ marca, nombre, producto, monto, url, metodos }) {
 // Crea el checkout, guarda el link y lo manda por SMS. Si el SMS falla el
 // link se guarda igual y se devuelve con `smsError`: la vendedora todavía
 // puede dictarlo o copiarlo, y el cliente sigue en la línea.
-async function crearYEnviarLink({ lead, monto, user }) {
+async function crearYEnviarLink({ lead, monto, user, canal = "sms" }) {
   const stripe = getStripe();
 
   // Un link nuevo reemplaza a los que el cliente no ha abierto: así no
@@ -257,26 +259,39 @@ async function crearYEnviarLink({ lead, monto, user }) {
       url: session.url,
       monto,
       enviadoA: lead.telefono,
+      canal,
       enviadoPorId: user.id,
       enviadoPorNombre: user.nombre || user.email || null,
       expiraAt,
     },
   });
 
-  const mensaje = mensajeDelLink({
-    marca: branding.display_name,
-    nombre: lead.nombre,
-    producto: lead.cantidad > 1 ? `${lead.producto} (x${lead.cantidad})` : lead.producto,
-    monto,
-    url: urlCorta(link.id) || session.url,
-    metodos,
-  });
+  const producto = lead.cantidad > 1 ? `${lead.producto} (x${lead.cantidad})` : lead.producto;
   try {
-    if (!smsEnabled()) throw new Error("SMS no configurado");
-    const sms = await sendSms(lead.telefono, mensaje);
-    link = await prisma.linkPago.update({ where: { id: link.id }, data: { smsSid: sms.sid } });
+    let envio;
+    if (canal === "whatsapp") {
+      // Las variables de la plantilla, por posición (ver la plantilla en
+      // Twilio Content): el botón "Pagar ahora" arma la URL con {{4}}.
+      envio = await whatsapp.sendTemplate(lead.telefono, process.env.TWILIO_WHATSAPP_LINK_PAGO_SID, {
+        1: String(lead.nombre || "").trim().split(/\s+/)[0] || "cliente",
+        2: producto,
+        3: `$${monto.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        4: codigoCorto(link.id),
+      });
+    } else {
+      if (!smsEnabled()) throw new Error("SMS no configurado");
+      envio = await sendSms(lead.telefono, mensajeDelLink({
+        marca: branding.display_name,
+        nombre: lead.nombre,
+        producto,
+        monto,
+        url: urlCorta(link.id) || session.url,
+        metodos,
+      }));
+    }
+    link = await prisma.linkPago.update({ where: { id: link.id }, data: { smsSid: envio.sid } });
   } catch (err) {
-    console.error("no se pudo mandar el link de pago por sms", link.id, err.message);
+    console.error(`no se pudo mandar el link de pago por ${canal}`, link.id, err.message);
     link = await prisma.linkPago.update({
       where: { id: link.id },
       data: { smsError: String(err.message || err).slice(0, 300) },
@@ -543,4 +558,5 @@ module.exports = {
   cancelarLinksVivos,
   idDeCodigo,
   mensajeDelLink,
+  whatsappHabilitado: whatsapp.isEnabled,
 };

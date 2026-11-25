@@ -8,7 +8,7 @@ const prisma = require("../lib/prisma");
 const { filtroLead } = require("../lib/accesoLead");
 const {
   isEnabled, getStripe, MONTO_MINIMO, serializarLink, crearYEnviarLink, procesarEventoStripe,
-  cancelarLinksVivos,
+  cancelarLinksVivos, whatsappHabilitado,
 } = require("../lib/linksPago");
 
 const router = express.Router();
@@ -30,7 +30,7 @@ router.get("/lead/:leadId/links", authMiddleware, async (req, res) => {
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
 
     const links = await prisma.linkPago.findMany({ where: { leadId }, orderBy: { createdAt: "desc" } });
-    res.json({ habilitado: isEnabled(), links: links.map(serializarLink) });
+    res.json({ habilitado: isEnabled(), whatsapp: whatsappHabilitado(), links: links.map(serializarLink) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
@@ -52,6 +52,10 @@ router.post("/lead/:leadId/link", authMiddleware, async (req, res) => {
     const lead = await prisma.lead.findFirst({ where: filtroCobro(req.user, leadId), include: { venta: true } });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
     if (!lead.telefono) return res.status(400).json({ error: "El lead no tiene teléfono" });
+    const canal = req.body?.canal === "whatsapp" ? "whatsapp" : "sms";
+    if (canal === "whatsapp" && !whatsappHabilitado()) {
+      return res.status(400).json({ error: "El envío por WhatsApp todavía no está configurado" });
+    }
     // Una venta que ya salió con cobro contra entrega no se cobra también
     // por link: el mensajero cobraría el monto completo otra vez. Sin
     // cobertura (o ya prepagada) sí: ahí el link es como se cobra.
@@ -83,7 +87,7 @@ router.post("/lead/:leadId/link", authMiddleware, async (req, res) => {
       });
     }
 
-    const link = await crearYEnviarLink({ lead, monto, user: req.user });
+    const link = await crearYEnviarLink({ lead, monto, user: req.user, canal });
     res.status(201).json(serializarLink(link));
   } catch (err) {
     console.error(err);
