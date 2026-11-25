@@ -305,13 +305,14 @@ router.get("/leads", async (req, res) => {
     // lista cuadre con el contador `sinAsignar` que va en el mismo response.
     // Un lead ya repartido se consulta y se reasigna desde "asignados".
     // Las pestañas por estatus de trabajo (Nuevos, Nuevos sin llamadas,
-    // Rellamadas, Reintentos, En hold, Descartados). Las reglas son las
-    // generales de src/lib/categoriaLead.js; lo unico propio de la cola es
-    // que las de trabajo se limitan a lo que no tiene vendedora -- lo que
-    // ya tiene dueña se consulta en "Ya asignados", igual que en las
-    // secciones. Los descartados se ven todos: su vendedora es historia.
+    // Rellamadas, Reintentos, En hold, Descartados). Traen TODOS los leads
+    // del estatus, tengan vendedora o no, igual que Leads del
+    // administrador: el estatus es general y tiene que contar lo mismo
+    // mire quien mire. Limitarlas a lo que no tenia vendedora hacia que el
+    // admin viera cuatro "Nuevos" que en la cola no aparecian, porque el
+    // reparto automatico ya los habia asignado. Dentro de la pestaña las
+    // secciones siguen separando lo que falta repartir de "Ya asignados".
     if (TABS_ESTATUS.includes(asignacion)) {
-      if (asignacion !== "descartados") where.vendedorId = null;
       filtros.push(dondeCategoria(asignacion));
     } else if (asignacion === "asignados") {
       where.vendedorId = { not: null };
@@ -421,11 +422,7 @@ router.get("/leads", async (req, res) => {
       await Promise.all(TABS_ESTATUS.map(async (id) => [
         id,
         await prisma.lead.count({
-          where: {
-            tenantId: req.user.tenantId,
-            ...(id !== "descartados" ? { vendedorId: null } : {}),
-            AND: [dondeCategoria(id, ahoraConteo)],
-          },
+          where: { tenantId: req.user.tenantId, AND: [dondeCategoria(id, ahoraConteo)] },
         }),
       ]))
     );
