@@ -73,13 +73,23 @@ async function gruposRepetidos(tenantId, criterio) {
   const claves = filas.map((f) => f.clave);
   const leads = await prisma.$queryRawUnsafe(
     `SELECT id, ${clave} AS clave, "folioPS", folio, nombre, telefono, producto, status,
-            "motivoDescarte", "createdAt", "vendedorId", state
+            "motivoDescarte", "createdAt", "vendedorId", state, source
        FROM leads
       WHERE "tenantId" = $1 AND ${clave} = ANY($2::text[])
       ORDER BY "createdAt" ASC`,
     tenantId,
     claves
   );
+
+  // Quien tiene cada lead. Aparte y no con un JOIN: la clave usa `nombre` y
+  // `telefono` sin prefijo, y con `users` en el FROM los dos serian
+  // ambiguos. Es una consulta mas, por ids, para todo el lote.
+  const idsVendedora = [...new Set(leads.map((l) => l.vendedorId).filter(Boolean))];
+  const vendedoras = idsVendedora.length
+    ? await prisma.user.findMany({ where: { id: { in: idsVendedora } }, select: { id: true, nombre: true } })
+    : [];
+  const nombreVendedora = new Map(vendedoras.map((v) => [v.id, v.nombre]));
+  for (const l of leads) l.vendedorNombre = l.vendedorId ? nombreVendedora.get(l.vendedorId) ?? null : null;
 
   const porClave = new Map();
   for (const l of leads) {
