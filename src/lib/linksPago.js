@@ -12,6 +12,7 @@
 // OXXO y SPEI no se pagan en el momento: el cliente termina el checkout con
 // una ficha o una CLABE y el dinero cae después. Por eso un link pasa por
 // ENVIADO -> PENDIENTE_PAGO -> PAGADO, y sólo PAGADO libera el envío.
+const crypto = require("crypto");
 const Stripe = require("stripe");
 const prisma = require("./prisma");
 const { sendSms, isEnabled: smsEnabled } = require("./twilioSms");
@@ -62,6 +63,38 @@ async function metodosActivos() {
   return ["card", ...Object.keys(CAPACIDADES).filter((m) => capacidades.valores[CAPACIDADES[m]] === "active")];
 }
 
+// --- Link corto ------------------------------------------------------------
+//
+// La URL del checkout de Stripe pasa de 400 caracteres: en un SMS es medio
+// mensaje de basura y el cliente no sabe de quién es. El SMS lleva en su
+// lugar perfectself.com.mx/pagar/<codigo>, que redirige al checkout.
+//
+// El código es el id del link en base 36 más una firma corta con
+// JWT_SECRET. Sin la firma bastaría con cambiar el número para abrir el
+// checkout de otro cliente; con ella no se puede adivinar. Así no hace falta
+// guardar nada nuevo en la base.
+function firma(id) {
+  return crypto.createHmac("sha256", process.env.JWT_SECRET || "").update(`pago:${id}`).digest("base64url").slice(0, 8);
+}
+
+function codigoCorto(id) {
+  return `${Number(id).toString(36)}-${firma(id)}`;
+}
+
+// El id del link si el código es auténtico; null si no.
+function idDeCodigo(codigo) {
+  const m = /^([0-9a-z]+)-([A-Za-z0-9_-]{8})$/.exec(String(codigo || ""));
+  if (!m) return null;
+  const id = parseInt(m[1], 36);
+  if (!Number.isSafeInteger(id)) return null;
+  const esperada = firma(id);
+  return crypto.timingSafeEqual(Buffer.from(esperada), Buffer.from(m[2])) ? id : null;
+}
+
+function urlCorta(id) {
+  return process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/pagar/${codigoCorto(id)}` : null;
+}
+
 function serializarLink(l) {
   return {
     id: l.id,
@@ -70,6 +103,7 @@ function serializarLink(l) {
     metodoLabel: l.metodo ? METODOS[l.metodo] || l.metodo : null,
     monto: l.monto,
     url: l.url,
+    urlCorta: urlCorta(l.id),
     enviadoA: l.enviadoA,
     smsEnviado: Boolean(l.smsSid),
     smsError: l.smsError,
@@ -91,6 +125,63 @@ async function metodoDelPago(paymentIntentId) {
     console.error("no se pudo leer el metodo del pago de stripe", paymentIntentId, err.message);
     return null;
   }
+}
+
+// Cómo se presenta el checkout: con la marca del espacio y no con la de la
+// cuenta de Stripe. Todo cae en una sola cuenta (STRIPE_SECRET_KEY) cuyo
+// nombre público es el de otro negocio, y el cliente de Perfect Self veía
+// ese nombre arriba de la página de pago -- lo primero que lee antes de
+// meter su tarjeta.
+//
+// `display_name` sólo cambia el encabezado del checkout: Stripe sigue
+// usando el nombre de la cuenta en los términos y en los recibos. El estado
+// de cuenta de la tarjeta lo decide el descriptor de la cuenta.
+//
+// Sin logo propio se usa el de la plataforma (el mismo que ve el frontend
+// por defecto). Stripe descarga las imágenes por URL, así que sólo se
+// mandan si son https: en local FRONTEND_URL es http y Stripe rechazaría
+// el link completo.
+const COLOR_MARCA = "#7e5a97";
+async function brandingDelCheckout(tenantId) {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { nombreComercial: true, razonSocial: true, logoUrl: true, colorPrimario: true },
+  });
+  const base = process.env.FRONTEND_URL || "";
+  const https = (u) => (u && /^https:\/\//.test(u) ? u : null);
+  const logo = https(tenant?.logoUrl) || https(`${base}/brand/wordmark.png`);
+  const icono = tenant?.logoUrl ? null : https(`${base}/brand/icon.png`);
+  const color = /^#[0-9a-f]{6}$/i.test(tenant?.colorPrimario || "") ? tenant.colorPrimario : COLOR_MARCA;
+  return {
+    display_name: (tenant?.nombreComercial || tenant?.razonSocial || "").slice(0, 100) || undefined,
+    button_color: color,
+    ...(logo ? { logo: { type: "url", url: logo } } : {}),
+    ...(icono ? { icon: { type: "url", url: icono } } : {}),
+  };
+}
+
+// El texto del SMS. Va por renglones para que se lea de un vistazo en el
+// celular: de quién es, qué paga, cuánto y dónde. Sin emojis a propósito:
+// un solo emoji parte el SMS en más segmentos y en algunos teléfonos llega
+// como un cuadro vacío.
+const OPCIONES_PAGO = { card: "tarjeta", oxxo: "OXXO", customer_balance: "transferencia SPEI" };
+function mensajeDelLink({ marca, nombre, producto, monto, url, metodos }) {
+  const opciones = metodos.map((m) => OPCIONES_PAGO[m]).filter(Boolean);
+  const lista = opciones.length > 1 ? `${opciones.slice(0, -1).join(", ")} y ${opciones.at(-1)}` : opciones[0];
+  const primerNombre = String(nombre || "").trim().split(/\s+/)[0];
+  return [
+    ...(marca ? [marca, ""] : []),
+    `Hola${primerNombre ? ` ${primerNombre}` : ""}, este es tu link para pagar tu pedido.`,
+    "",
+    producto,
+    `Total: $${monto.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MXN`,
+    "",
+    "Paga aqui:",
+    url,
+    "",
+    `Aceptamos ${lista}.`,
+    `El link vence en ${MINUTOS_VIGENCIA} minutos.`,
+  ].join("\n");
 }
 
 // Crea el checkout, guarda el link y lo manda por SMS. Si el SMS falla el
@@ -124,6 +215,7 @@ async function crearYEnviarLink({ lead, monto, user }) {
     ).id;
 
   const metodos = await metodosActivos();
+  const branding = await brandingDelCheckout(lead.tenantId);
   const metadata = { leadId: String(lead.id), tenantId: String(lead.tenantId), folio: lead.folioPS || "" };
   const expiraAt = new Date(Date.now() + MINUTOS_VIGENCIA * 60 * 1000);
   const session = await stripe.checkout.sessions.create({
@@ -153,6 +245,7 @@ async function crearYEnviarLink({ lead, monto, user }) {
     metadata,
     expires_at: Math.floor(expiraAt.getTime() / 1000),
     success_url: `${process.env.FRONTEND_URL}/pago-recibido`,
+    branding_settings: branding,
   });
 
   let link = await prisma.linkPago.create({
@@ -170,11 +263,14 @@ async function crearYEnviarLink({ lead, monto, user }) {
     },
   });
 
-  const opciones = metodos.map((m) => ({ card: "con tarjeta", oxxo: "en OXXO", customer_balance: "por transferencia SPEI" })[m]);
-  const mensaje =
-    `Hola ${lead.nombre}, este es tu link para pagar tu ${lead.producto} por ` +
-    `$${monto.toLocaleString("es-MX")}: ${session.url} ` +
-    `Puedes pagar ${opciones.length > 1 ? `${opciones.slice(0, -1).join(", ")} o ${opciones.at(-1)}` : opciones[0]}.`;
+  const mensaje = mensajeDelLink({
+    marca: branding.display_name,
+    nombre: lead.nombre,
+    producto: lead.cantidad > 1 ? `${lead.producto} (x${lead.cantidad})` : lead.producto,
+    monto,
+    url: urlCorta(link.id) || session.url,
+    metodos,
+  });
   try {
     if (!smsEnabled()) throw new Error("SMS no configurado");
     const sms = await sendSms(lead.telefono, mensaje);
@@ -445,4 +541,6 @@ module.exports = {
   cobroDelLead,
   bloqueoPorLinkPendiente,
   cancelarLinksVivos,
+  idDeCodigo,
+  mensajeDelLink,
 };

@@ -1,5 +1,6 @@
 const express = require("express");
 const { direccionDesdeCoordenadas } = require("../lib/reverseGeocode");
+const { idDeCodigo } = require("../lib/linksPago");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -95,6 +96,28 @@ router.get("/ubicacion/:token", async (req, res) => {
     if (!lead) return res.json({ valid: false, motivo: "no_encontrado" });
     if (!tokenVigente(lead)) return res.json({ valid: false, motivo: "expirado" });
     res.json({ valid: true, nombre: lead.nombre });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/public/pago/:codigo — a dónde lleva el link corto del SMS
+// (perfectself.com.mx/pagar/<codigo>). El código va firmado (ver
+// idDeCodigo en src/lib/linksPago.js), así que no se puede adivinar el de
+// otro cliente. Sólo se entrega la URL del checkout mientras se puede
+// pagar; si no, se dice por qué.
+router.get("/pago/:codigo", async (req, res) => {
+  try {
+    const id = idDeCodigo(req.params.codigo);
+    const link = id ? await prisma.linkPago.findUnique({ where: { id } }) : null;
+    if (!link) return res.json({ estado: "invalido" });
+    if (link.estado === "PAGADO") return res.json({ estado: "pagado" });
+    // Con la ficha OXXO o la CLABE ya generadas el checkout sigue abriendo
+    // y le vuelve a mostrar sus datos de pago.
+    if (link.estado === "PENDIENTE_PAGO") return res.json({ estado: "abierto", url: link.url });
+    if (link.estado !== "ENVIADO" || link.expiraAt <= new Date()) return res.json({ estado: "vencido" });
+    res.json({ estado: "abierto", url: link.url });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
