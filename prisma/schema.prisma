@@ -93,6 +93,7 @@ model Tenant {
   leads          Lead[]
   ventas         Venta[]
   prepagos       PrepagoGestion[]
+  linksPago      LinkPago[]
   prepagoNotas   PrepagoNota[]
   apiKeys        ApiKey[]
   incomingLeads  IncomingLead[]
@@ -340,6 +341,7 @@ model Lead {
 
   incomingLead IncomingLead?
 
+  linksPago     LinkPago[]
   llamadas      Llamada[]
   venta         Venta?
   items         LeadItem[]
@@ -648,6 +650,67 @@ model PrepagoNota {
 
   @@index([gestionId])
   @@map("prepago_notas")
+}
+
+// Link de cobro de Stripe que se le manda al cliente por SMS, casi siempre
+// a media llamada: la vendedora ve el aviso de FC FV, pulsa el botón y el
+// cliente paga desde su celular con tarjeta, OXXO o SPEI.
+//
+// Cuelga del LEAD y no de la venta a propósito: en media llamada la venta
+// todavía no existe -- se registra al confirmar el carrito, que además
+// cuelga. El cobro se cruza con la venta (y su expediente de prepago)
+// cuando las dos cosas existen, sin importar cuál llegó primero (ver
+// src/lib/linksPago.js).
+//
+// Un link no es un pago: con OXXO y SPEI el cliente termina el checkout con
+// una ficha o una CLABE y el dinero cae horas o días después. `estado`
+// distingue esas etapas.
+model LinkPago {
+  id     Int  @id @default(autoincrement())
+  leadId Int
+  lead   Lead @relation(fields: [leadId], references: [id])
+
+  stripeSessionId       String  @unique
+  stripeCustomerId      String?
+  stripePaymentIntentId String?
+  url                   String
+
+  // Lo que se le cobra, en pesos: producto más flete.
+  monto Float
+  estado LinkPagoEstado @default(ENVIADO)
+  // card | oxxo | customer_balance (SPEI). Se sabe hasta que el cliente
+  // elige en el checkout.
+  metodo String?
+
+  enviadoA      String
+  smsSid        String?
+  smsError      String?
+  enviadoPorId     Int?
+  enviadoPorNombre String?
+
+  expiraAt  DateTime
+  pagadoAt  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([leadId])
+  @@map("links_pago")
+}
+
+enum LinkPagoEstado {
+  // Mandado; el cliente no ha terminado el checkout.
+  ENVIADO
+  // Eligió OXXO o SPEI: ya tiene su ficha o su CLABE, falta que pague.
+  PENDIENTE_PAGO
+  PAGADO
+  // Venció sin que el cliente terminara el checkout, o se reemplazó por
+  // uno nuevo.
+  VENCIDO
+  // La ficha OXXO o la transferencia no llegaron a tiempo.
+  FALLIDO
 }
 
 enum PrepagoEstado {

@@ -6,6 +6,7 @@ const { filtroLead } = require("../lib/accesoLead");
 const { emitir } = require("../lib/eventos");
 const { getParametros } = require("../lib/parametros");
 const { crearAviso } = require("../lib/avisos");
+const { aplicarCobroALaVenta } = require("../lib/linksPago");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -189,6 +190,10 @@ router.post("/venta", authMiddleware, async (req, res) => {
     syncVentaToFullVector(venta.id).catch((err) => {
       console.error("fullvector sync error, venta", venta.id, err);
     });
+
+    // Si el cliente ya pagó con el link a media llamada, la venta nace
+    // pagada (ver src/lib/linksPago.js). No lanza.
+    await aplicarCobroALaVenta(leadId);
 
     // A la coordinadora que repartió este lead le interesa saber que
     // convirtió: es su comisión y es la señal de que repartió bien.

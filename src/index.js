@@ -38,6 +38,7 @@ const superadminRoutes = require("./routes/superadmin");
 const proveedorRoutes = require("./routes/proveedor");
 const coordinadorRoutes = require("./routes/coordinador");
 const prepagoRoutes = require("./routes/prepago");
+const pagosRoutes = require("./routes/pagos");
 const voiceRoutes = require("./routes/voice");
 const publicRoutes = require("./routes/public");
 const brandingRoutes = require("./routes/branding");
@@ -114,6 +115,8 @@ app.use(cors({
   },
   credentials: true,
 }));
+// Antes de express.json(): Stripe firma el cuerpo crudo (ver src/routes/pagos.js).
+app.post("/api/pagos/stripe/webhook", express.raw({ type: "application/json" }), pagosRoutes.stripeWebhook);
 app.use(express.json());
 app.use(express.urlencoded({ extended: false })); // Twilio postea los webhooks form-encoded
 // Kardex: registra todo request que modifica algo (ver src/lib/auditoria.js).
@@ -175,6 +178,7 @@ app.use("/api/superadmin", superadminRoutes);
 app.use("/api/proveedor", proveedorRoutes);
 app.use("/api/coordinador", coordinadorRoutes);
 app.use("/api/prepago", prepagoRoutes);
+app.use("/api/pagos", pagosRoutes);
 app.use("/api/voice", voiceRoutes);
 app.use("/api/eventos", eventosRoutes);
 app.use("/api/public", publicRoutes);

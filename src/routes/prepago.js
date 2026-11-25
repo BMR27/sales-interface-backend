@@ -9,6 +9,7 @@
 // el admin quien vigila el dinero detenido.
 const express = require("express");
 const authMiddleware = require("../middleware/auth");
+const { serializarLink } = require("../lib/linksPago");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -31,7 +32,7 @@ const INCLUDE_COMPLETO = {
   venta: {
     include: {
       vendedor: { select: { id: true, nombre: true } },
-      lead: true,
+      lead: { include: { linksPago: { orderBy: { createdAt: "desc" } } } },
     },
   },
 };
@@ -55,6 +56,8 @@ function serializar(g) {
     },
     creadaAt: g.createdAt,
     actualizadaAt: g.updatedAt,
+    // Cobros por link de Stripe (ver src/lib/linksPago.js), el más nuevo primero.
+    linksPago: (l?.linksPago || []).map(serializarLink),
     notas: (g.notas || []).map((n) => ({
       id: n.id, nota: n.nota, autor: n.autorNombre, fecha: n.createdAt,
     })),

@@ -253,6 +253,9 @@ async function abrirGestionPrepago(venta, lead) {
           : {}),
       },
     });
+    // El cliente pudo haber pagado con el link a media llamada, antes de
+    // que existiera el expediente (ver src/lib/linksPago.js).
+    await require("./linksPago").aplicarCobroALaVenta(venta.leadId);
 
     const vendedor = await prisma.user.findUnique({
       where: { id: venta.vendedorId },
