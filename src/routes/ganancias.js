@@ -6,7 +6,7 @@ const { filtroLead } = require("../lib/accesoLead");
 const { emitir } = require("../lib/eventos");
 const { getParametros } = require("../lib/parametros");
 const { crearAviso } = require("../lib/avisos");
-const { aplicarCobroALaVenta } = require("../lib/linksPago");
+const { aplicarCobroALaVenta, bloqueoPorLinkPendiente, cobroDelLead } = require("../lib/linksPago");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -101,6 +101,13 @@ router.post("/venta", authMiddleware, async (req, res) => {
       return res.status(409).json({ error: "Este lead ya tiene una venta registrada" });
     }
 
+    // El cobro por link decide cómo nace la venta (ver src/lib/linksPago.js):
+    // con un link vivo no se cierra, y con uno pagado nace prepagada para
+    // que FullVector no la cobre otra vez al entregar.
+    const bloqueo = await bloqueoPorLinkPendiente(lead);
+    if (bloqueo) return res.status(409).json({ error: bloqueo, linkPendiente: true });
+    const { pagado } = await cobroDelLead(leadId);
+
     // La comision se calcula por bloques de piezas sobre la quincena (ver
     // src/lib/comisiones.js), no como porcentaje de esta venta: nace en 0 y
     // la recalcula recalcularQuincena mas abajo. `entregaExitosa` tampoco se
@@ -111,6 +118,17 @@ router.post("/venta", authMiddleware, async (req, res) => {
         costoEnvio: Number(costoEnvio) || 0,
         folio: folio || null,
         tenantId: req.user.tenantId,
+        // Pagada con el link antes de cerrar: la orden sale con $0 por
+        // cobrar. A diferencia de las de la landing, `sinComision` se queda
+        // en false -- la cerró una vendedora y la comisión es suya.
+        ...(pagado
+          ? {
+              prepagada: true,
+              pagoProveedor: "Stripe",
+              pagoReferencia: pagado.stripePaymentIntentId || pagado.stripeSessionId,
+              pagadoAt: pagado.pagadoAt || new Date(),
+            }
+          : {}),
       },
     });
 

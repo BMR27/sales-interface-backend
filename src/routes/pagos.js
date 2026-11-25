@@ -8,6 +8,7 @@ const prisma = require("../lib/prisma");
 const { filtroLead } = require("../lib/accesoLead");
 const {
   isEnabled, getStripe, MONTO_MINIMO, serializarLink, crearYEnviarLink, procesarEventoStripe,
+  cancelarLinksVivos,
 } = require("../lib/linksPago");
 
 const router = express.Router();
@@ -51,6 +52,14 @@ router.post("/lead/:leadId/link", authMiddleware, async (req, res) => {
     const lead = await prisma.lead.findFirst({ where: filtroCobro(req.user, leadId), include: { venta: true } });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
     if (!lead.telefono) return res.status(400).json({ error: "El lead no tiene teléfono" });
+    // Una venta que ya salió con cobro contra entrega no se cobra también
+    // por link: el mensajero cobraría el monto completo otra vez. Sin
+    // cobertura (o ya prepagada) sí: ahí el link es como se cobra.
+    if (lead.venta && !lead.venta.prepagada && !lead.venta.fullvectorSinCobertura && lead.coberturaFv !== false) {
+      return res.status(409).json({
+        error: "Esta venta ya se registró con pago contra entrega: el mensajero va a cobrarla al entregar. Si el cliente quiere pagar en línea, hay que cancelar el cobro en FullVector primero.",
+      });
+    }
 
     const monto = lead.venta
       ? lead.venta.monto + (lead.venta.costoEnvio || 0)
@@ -79,6 +88,30 @@ router.post("/lead/:leadId/link", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err?.type?.startsWith?.("Stripe") ? `Stripe: ${err.message}` : "Error al crear el link de pago" });
+  }
+});
+
+// POST /api/pagos/lead/:leadId/link/cancelar — el cliente prefirió pagar
+// contra entrega. Vence el checkout que no abrió y anula la ficha OXXO o la
+// CLABE que ya tenga, para que no pueda pagar el link y además en efectivo.
+router.post("/lead/:leadId/link/cancelar", authMiddleware, async (req, res) => {
+  try {
+    if (!isEnabled()) return res.status(503).json({ error: "El cobro con Stripe no está configurado" });
+    const leadId = parseInt(req.params.leadId);
+    const lead = await prisma.lead.findFirst({ where: filtroCobro(req.user, leadId), select: { id: true } });
+    if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
+
+    const { cancelados, noCancelados } = await cancelarLinksVivos(leadId);
+    if (noCancelados.length > 0) {
+      return res.status(409).json({
+        error: "Stripe no dejó cancelar el link: el pago ya se está procesando. Espera a que se confirme antes de cerrar la venta.",
+        cancelados,
+      });
+    }
+    res.json({ cancelados });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "No se pudo cancelar el link de pago" });
   }
 });
 

@@ -28,6 +28,7 @@ const { resolverProducto } = require("../lib/catalogoProducto");
 
 const { filtroLead } = require("../lib/accesoLead");
 
+const { bloqueoPorLinkPendiente } = require("../lib/linksPago");
 const router = express.Router();
 const prisma = require("../lib/prisma");
 
@@ -197,6 +198,14 @@ router.post("/:id/confirmar", authMiddleware, requirePermiso("vendedor.leads.con
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
     if (lead.status === "VENTA") {
       return res.status(409).json({ error: "Este lead ya tiene una venta cerrada" });
+    }
+    // Con un link de pago vivo la venta no se cierra: si saliera contra
+    // entrega y el cliente pagara el link, se le cobraría dos veces. Va
+    // aquí, antes de anotar nada, y no sólo al registrar la venta: la
+    // pantalla llama primero a esta ruta.
+    if (aceptoOferta) {
+      const bloqueo = await bloqueoPorLinkPendiente(lead);
+      if (bloqueo) return res.status(409).json({ error: bloqueo, linkPendiente: true });
     }
 
     const cartItems = Array.isArray(items) ? items : [];

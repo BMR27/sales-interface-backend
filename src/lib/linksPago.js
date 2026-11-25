@@ -251,6 +251,75 @@ async function aplicarCobroALaVenta(leadId) {
   }
 }
 
+// --- Cobro con cobertura --------------------------------------------------
+//
+// Con cobertura el cliente elige: paga ya con el link o paga en efectivo al
+// recibir. Las dos cosas no pueden convivir en la misma venta, porque
+// FullVector cobra lo que diga la orden: si el link se paga y la orden sale
+// con el monto completo, el mensajero le cobra otra vez.
+//
+// La regla es simple y vive aquí para que la usen la llamada, el registro
+// de la venta y el envío del link:
+//
+//   pagado      la venta nace prepagada: la orden sale con $0 por cobrar
+//   pendiente   hay un link vivo sin pagar: no se cierra la venta hasta que
+//               pague o hasta que se cancele el link y se pase a contra
+//               entrega
+//   ninguno     contra entrega, como siempre
+
+// Lo que dice el cobro por link de un lead.
+async function cobroDelLead(leadId) {
+  const links = await prisma.linkPago.findMany({ where: { leadId }, orderBy: { createdAt: "desc" } });
+  const pagado = links.find((l) => l.estado === "PAGADO") || null;
+  const pendientes = links.filter((l) => l.estado === "ENVIADO" || l.estado === "PENDIENTE_PAGO");
+  return { pagado, pendientes };
+}
+
+// El error que se le muestra a la vendedora si intenta cerrar con un link
+// vivo. `null` si se puede cerrar. Sin cobertura (FC FV) no aplica: ahí no
+// hay pago contra entrega, el link vivo es justo como se cobra.
+async function bloqueoPorLinkPendiente(lead) {
+  if (lead.coberturaFv === false) return null;
+  const { pagado, pendientes } = await cobroDelLead(lead.id);
+  if (pagado || pendientes.length === 0) return null;
+  const oxxo = pendientes.some((l) => l.estado === "PENDIENTE_PAGO");
+  return oxxo
+    ? "El cliente ya generó una ficha OXXO o una CLABE con el link y todavía no paga. Espera a que se refleje el pago, o cancela el link y pásalo a pago contra entrega."
+    : "El cliente tiene un link de pago sin pagar. Espera a que pague, o cancela el link y pásalo a pago contra entrega.";
+}
+
+// Cancela los links vivos de un lead: el checkout que no se ha abierto se
+// vence, y la ficha OXXO o la CLABE ya generadas se anulan cancelando su
+// PaymentIntent. Si Stripe no deja cancelar uno (el pago ya se está
+// procesando) se reporta y ese link se queda como está: el cliente pudo
+// haber pagado y no hay que fingir lo contrario.
+async function cancelarLinksVivos(leadId) {
+  const stripe = getStripe();
+  const { pendientes } = await cobroDelLead(leadId);
+  const noCancelados = [];
+  for (const l of pendientes) {
+    try {
+      if (l.estado === "ENVIADO") {
+        await stripe.checkout.sessions.expire(l.stripeSessionId).catch((err) => {
+          // Ya vencida del lado de Stripe: para nosotros es lo mismo.
+          if (!/expired|not open|status of `expired`|complete/i.test(err.message || "")) throw err;
+        });
+      } else if (l.stripePaymentIntentId) {
+        await stripe.paymentIntents.cancel(l.stripePaymentIntentId);
+      }
+      await prisma.linkPago.updateMany({
+        where: { id: l.id, estado: { in: ["ENVIADO", "PENDIENTE_PAGO"] } },
+        data: { estado: "VENCIDO" },
+      });
+    } catch (err) {
+      console.error("no se pudo cancelar el link de pago", l.id, err.message);
+      noCancelados.push(l.id);
+    }
+  }
+  if (pendientes.length) emitir((await prisma.lead.findUnique({ where: { id: leadId }, select: { tenantId: true } })).tenantId, "pago.actualizado", { leadId });
+  return { cancelados: pendientes.length - noCancelados.length, noCancelados };
+}
+
 // --- Webhook -------------------------------------------------------------
 //
 // Cada transición se hace con updateMany y el estado de origen en el where:
@@ -274,6 +343,7 @@ async function marcarPagado(session) {
   if (count === 0) return;
 
   await aplicarCobroALaVenta(link.leadId);
+  await avisarSiHayCobroDoble(link, session);
 
   const lead = await prisma.lead.findUnique({ where: { id: link.leadId }, select: { nombre: true, vendedorId: true } });
   const avisar = new Set([link.enviadoPorId, lead?.vendedorId].filter(Boolean));
@@ -288,6 +358,37 @@ async function marcarPagado(session) {
     });
   }
   emitir(link.tenantId, "pago.actualizado", { leadId: link.leadId });
+}
+
+// El pago llegó y la venta ya había salido a FullVector con cobro contra
+// entrega. No debería pasar -- la venta no se cierra con un link vivo y no
+// se manda link sobre una venta contra entrega -- pero un OXXO pagado en
+// la ventana entre una cosa y otra lo dejaría pasar, y el costo es cobrarle
+// dos veces al cliente. Se avisa a los administradores para que frenen el
+// cobro en FullVector o reembolsen.
+async function avisarSiHayCobroDoble(link, session) {
+  try {
+    const venta = await prisma.venta.findUnique({ where: { leadId: link.leadId } });
+    if (!venta || venta.prepagada || venta.fullvectorSinCobertura) return;
+    const admins = await prisma.user.findMany({
+      where: { tenantId: link.tenantId, rol: { in: ["ADMIN", "ADMIN_OPERATIVO"] }, activo: true },
+      select: { id: true },
+    });
+    const monto = Math.round(session.amount_total / 100 || link.monto).toLocaleString("es-MX");
+    for (const a of new Set([...admins.map((x) => x.id), link.enviadoPorId].filter(Boolean))) {
+      crearAviso({
+        userId: a,
+        tenantId: link.tenantId,
+        tipo: "pago.cobro_doble",
+        categoria: "ALERTA",
+        titulo: "Posible cobro doble",
+        mensaje: `La venta ${venta.folio || `#${venta.id}`} se pagó con link ($${monto}) pero salió a FullVector con cobro contra entrega. Pide que no se cobre al entregar o reembolsa el pago.`,
+        enlace: "/admin/ventas",
+      });
+    }
+  } catch (err) {
+    console.error("no se pudo revisar el cobro doble", link.id, err);
+  }
 }
 
 async function marcarPendiente(session) {
@@ -341,4 +442,7 @@ module.exports = {
   crearYEnviarLink,
   aplicarCobroALaVenta,
   procesarEventoStripe,
+  cobroDelLead,
+  bloqueoPorLinkPendiente,
+  cancelarLinksVivos,
 };
