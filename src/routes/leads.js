@@ -6,7 +6,7 @@ const { siguienteFolio } = require("../lib/folios");
 const { resolverProducto } = require("../lib/catalogoProducto");
 const { MOTIVOS_VIGENTES, parseMotivo, esTrash } = require("../lib/motivosDescarte");
 const { isEnabled: smsEnabled, sendSms } = require("../lib/twilioSms");
-const { LEAD_STATUSES, LEAD_STATUSES_ABIERTOS, parseLeadStatus } = require("../lib/leadStatus");
+const { LEAD_STATUSES, LEAD_STATUSES_ABIERTOS, LEAD_STATUSES_CERRADOS_SIN_VENTA, parseLeadStatus } = require("../lib/leadStatus");
 const { notificarLeadNuevo } = require("../lib/notificaciones");
 const { registrarResultado, historialDeLead } = require("../lib/historialLlamadas");
 const { ocultarTelefonoLead, ocultarTelefonoLeads, ocultaTelefono } = require("../lib/telefono");
@@ -27,8 +27,12 @@ const prisma = require("../lib/prisma");
 // GET /api/leads
 router.get("/", authMiddleware, async (req, res) => {
   try {
-    const { status, search } = req.query;
+    const { status, search, estatusTrabajo } = req.query;
     const vendedorId = req.user.id;
+    // La pestaña "Descartados": los cierres sin venta, que el listado de
+    // trabajo deja fuera a proposito. Es la unica categoria que no sale de
+    // los leads abiertos, por eso es la unica que se pide aparte.
+    const verDescartados = estatusTrabajo === "descartados";
 
     const where = { vendedorId };
 
@@ -42,7 +46,9 @@ router.get("/", authMiddleware, async (req, res) => {
     //
     // Si se pide un status concreto se respeta -- ahi la pregunta es otra
     // ("¿cuales descarte?") y filtrar por encima la dejaria sin respuesta.
-    if (status) {
+    if (verDescartados) {
+      where.status = { in: LEAD_STATUSES_CERRADOS_SIN_VENTA };
+    } else if (status) {
       const parsed = parseLeadStatus(status);
       if (!parsed) {
         return res.status(400).json({ error: `status inválido. Valores: ${LEAD_STATUSES.join(", ")}` });
@@ -85,11 +91,16 @@ router.get("/", authMiddleware, async (req, res) => {
           // `status` asc se apoya en el orden del enum LeadStatus; este
           // feed ya solo trae abiertos, asi que decide entre NUEVO y
           // REAGENDADO.
-          orderBy: [
-            { status: "asc" },
-            { llamadas: { _count: "asc" } },
-            { createdAt: "desc" },
-          ],
+          orderBy: verDescartados
+            ? [{ updatedAt: "desc" }]
+            : [
+                { status: "asc" },
+                { llamadas: { _count: "asc" } },
+                { createdAt: "desc" },
+              ],
+          // Los descartados se acumulan sin fin; para la historia completa
+          // esta su Historial.
+          ...(verDescartados ? { take: 200 } : {}),
           include: {
             // La vendedora ve el mismo semaforo que su coordinadora: cuales no
             // ha tocado, cuales ya trabajo y cuanto le queda a cada uno.

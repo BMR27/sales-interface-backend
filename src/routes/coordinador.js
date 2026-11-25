@@ -16,6 +16,11 @@ const { describirLeads } = require("../lib/semaforoLead");
 const { emitir } = require("../lib/eventos");
 const { LEAD_STATUSES_ABIERTOS, LEAD_STATUSES_CERRADOS } = require("../lib/leadStatus");
 const { grupoDe, agrupar, esNuevoDeHoy, motivoDeAtraso } = require("../lib/colaCoordinacion");
+const { dondeCategoria } = require("../lib/categoriaLead");
+
+// Las pestañas de la cola que son un estatus de trabajo, en el orden en
+// que operacion las pidio.
+const TABS_ESTATUS = ["nuevos", "pendientes_antiguos", "rellamadas", "reintentos", "en_espera", "descartados"];
 const { contextoDeAsignacion, asignacionesDeHoy } = require("../lib/historialAsignaciones");
 const { registrarAsignacion } = require("../lib/cicloLead");
 const { marcarRecurrentes } = require("../lib/clienteRecurrente");
@@ -299,7 +304,16 @@ router.get("/leads", async (req, res) => {
     // "pendientes" es estrictamente lo que no tiene vendedora, para que la
     // lista cuadre con el contador `sinAsignar` que va en el mismo response.
     // Un lead ya repartido se consulta y se reasigna desde "asignados".
-    if (asignacion === "asignados") {
+    // Las pestañas por estatus de trabajo (Nuevos, Nuevos sin llamadas,
+    // Rellamadas, Reintentos, En hold, Descartados). Las reglas son las
+    // generales de src/lib/categoriaLead.js; lo unico propio de la cola es
+    // que las de trabajo se limitan a lo que no tiene vendedora -- lo que
+    // ya tiene dueña se consulta en "Ya asignados", igual que en las
+    // secciones. Los descartados se ven todos: su vendedora es historia.
+    if (TABS_ESTATUS.includes(asignacion)) {
+      if (asignacion !== "descartados") where.vendedorId = null;
+      filtros.push(dondeCategoria(asignacion));
+    } else if (asignacion === "asignados") {
       where.vendedorId = { not: null };
     } else if (asignacion === "espera") {
       // Los que rebotaron y siguen cumpliendo su espera. Se pueden mirar --
@@ -400,6 +414,22 @@ router.get("/leads", async (req, res) => {
       llamadas: { orderBy: { fecha: "desc" }, take: 1, select: { fecha: true, desenlace: true, contestada: true } },
     };
 
+    // Lo que dice cada pestaña de estatus, se este viendo o no: es lo que
+    // hace que la coordinadora sepa a cual entrar.
+    const ahoraConteo = new Date();
+    const conteosEstatus = Object.fromEntries(
+      await Promise.all(TABS_ESTATUS.map(async (id) => [
+        id,
+        await prisma.lead.count({
+          where: {
+            tenantId: req.user.tenantId,
+            ...(id !== "descartados" ? { vendedorId: null } : {}),
+            AND: [dondeCategoria(id, ahoraConteo)],
+          },
+        }),
+      ]))
+    );
+
     const [trabajo, cerrados, sinAsignar, enEspera, atrasados, params] = await Promise.all([
       prisma.lead.findMany({
         where: whereTrabajo,
@@ -435,7 +465,9 @@ router.get("/leads", async (req, res) => {
       prisma.lead.findMany({
         where: whereCerrados,
         orderBy: { updatedAt: "desc" },
-        take: 40,
+        // En su propia pestaña los descartados SON la lista, no el pie de
+        // la cola: ahi si se traen los mismos 300 que el trabajo.
+        take: asignacion === "descartados" ? 300 : 40,
         include: incluir,
       }),
       prisma.lead.count({ where: dondeRepartible(req.user.tenantId) }),
@@ -511,6 +543,7 @@ router.get("/leads", async (req, res) => {
       // tal cual: si decidiera ella el orden, acabaría discrepando del
       // servidor en cuanto cambie una regla.
       grupos: agrupar(enriquecidos),
+      conteosEstatus,
       sinAsignar,
       enEspera,
       atrasados,
