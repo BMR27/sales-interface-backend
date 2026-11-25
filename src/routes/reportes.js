@@ -29,6 +29,7 @@ const ExcelJS = require("exceljs");
 const authMiddleware = require("../middleware/auth");
 const gestionAdmin = require("../middleware/gestionAdmin");
 const { LEAD_STATUS_LABELS, LEAD_STATUSES } = require("../lib/leadStatus");
+const { CATEGORIAS, CATEGORIA_POR_ID, categoriaDe } = require("../lib/categoriaLead");
 const { POR_CLAVE: MOTIVO_POR_CLAVE, motivoLabel } = require("../lib/motivosDescarte");
 const { POR_CLAVE: RESULTADO_POR_CLAVE } = require("../lib/resultadosLlamada");
 const { inicioDeDia, finDeDia, diaLocal } = require("../lib/fechasLocales");
@@ -105,6 +106,18 @@ function hojaResumen(wb, { desde, hasta, leads, ventas, llamadas, descartes }) {
     "De los leads que entraron en el periodo, los que YA se concretaron (aunque la venta haya caído después). Es la cifra para evaluar al proveedor.",
     { pct: true }
   );
+
+  agregar("", "", "");
+
+  // El estatus de trabajo de esos mismos leads, con las secciones que ve la
+  // coordinadora en su cola. Viene precalculado en `l.estatusTrabajo` (ver la
+  // ruta), contra el mismo instante para todos.
+  agregar("ESTATUS DE TRABAJO", "", "", { seccion: true });
+  const porCategoria = {};
+  for (const l of leads) porCategoria[l.estatusTrabajo] = (porCategoria[l.estatusTrabajo] || 0) + 1;
+  for (const c of CATEGORIAS) {
+    agregar(`  ${c.titulo}`, porCategoria[c.id] || 0, c.descripcion);
+  }
 
   agregar("", "", "");
 
@@ -198,6 +211,7 @@ function hojaLeads(wb, leads, truncado) {
     { header: "Entró", key: "createdAt", width: 17 },
     { header: "Origen", key: "source", width: 10 },
     { header: "Estatus", key: "estatus", width: 16 },
+    { header: "Estatus de trabajo", key: "estatusTrabajo", width: 20 },
     { header: "Qué pasó en la llamada", key: "substatus", width: 26 },
     { header: "Motivo de caída", key: "motivo", width: 30 },
     { header: "Clave del motivo", key: "motivoClave", width: 20 },
@@ -249,6 +263,7 @@ function hojaLeads(wb, leads, truncado) {
       createdAt: l.createdAt,
       source: l.source,
       estatus: LEAD_STATUS_LABELS[l.status] || l.status,
+      estatusTrabajo: CATEGORIA_POR_ID[l.estatusTrabajo]?.titulo || "",
       substatus: resultado?.label || l.substatus || "",
       motivo: l.motivoDescarte ? motivoLabel(l.motivoDescarte) : "",
       motivoClave: l.motivoDescarte || "",
@@ -586,7 +601,7 @@ router.get("/export", async (req, res) => {
           producto: true, cantidad: true, primeraLlamadaAt: true, ultimoDesenlace: true,
           intentosEsperados: true, intentosRealizados: true, seguimientoIncompleto: true,
           devueltoAt: true, devueltoMotivo: true, devueltoPorNombre: true,
-          fechaReagenda: true, requiereSupervision: true, supervisionNota: true,
+          fechaReagenda: true, disponibleDesde: true, requiereSupervision: true, supervisionNota: true,
           solicitudEspecial: true, nombre: true, nombreOriginal: true, telefono: true,
           shippingStreet: true, shippingNumber: true, colonia: true, municipio: true,
           state: true, zipCode: true, coberturaFv: true,
@@ -645,6 +660,11 @@ router.get("/export", async (req, res) => {
         select: { motivoDescarte: true, motivoDescarteNota: true },
       }),
     ]);
+
+    // Clasificados todos contra el mismo instante, igual que en la cola:
+    // es el estatus de HOY, como el resto de la hoja.
+    const ahora = new Date();
+    for (const l of leads) l.estatusTrabajo = categoriaDe(l, { intentos: l.llamadas.length, ahora });
 
     const truncado = leads.length > MAX_DETALLE;
     const leadsHoja = truncado ? leads.slice(0, MAX_DETALLE) : leads;

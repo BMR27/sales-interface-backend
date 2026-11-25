@@ -37,46 +37,24 @@
 // cerrados junto a los que de verdad se estan trabajando. Se separan
 // porque son preguntas distintas: "quien esta atendiendo esto" no es
 // "esto ya se acabo".
-const { diaLocal } = require("./fechasLocales");
 
-// El orden es el del documento. `prioridad` es lo que se dibuja en la
-// pastilla de la derecha de cada seccion.
+// Las categorias (y sus reglas) viven en categoriaLead.js porque son
+// generales: el administrador, la vendedora y los reportes las ven igual.
+// Aqui solo se les agrega lo propio de la cola: la prioridad, el tono y la
+// seccion "Ya asignados", que no es un estatus sino quien lo tiene.
+const { CATEGORIA_POR_ID, esNuevoDeHoy, categoriaDe } = require("./categoriaLead");
+
+const cat = (id, extra) => ({ ...CATEGORIA_POR_ID[id], ...extra });
+
+// El orden es el que pidio operacion: Nuevos, Nuevos sin llamadas,
+// Rellamadas, Reintentos, En hold y Descartados. `prioridad` es lo que se
+// dibuja en la pastilla de la derecha de cada seccion.
 const GRUPOS = [
-  {
-    id: "nuevos",
-    titulo: "Nuevos leads",
-    descripcion: "Leads recién captados, listos para asignar y contactar.",
-    prioridad: "Prioridad alta",
-    tono: "media",
-  },
-  {
-    id: "pendientes_antiguos",
-    titulo: "Pendientes antiguos, sin llamadas",
-    descripcion: "Leads que llevan más tiempo esperando y no tienen llamadas registradas.",
-    prioridad: "Prioridad alta",
-    tono: "alta",
-  },
-  {
-    id: "reintentos",
-    titulo: "Reintentos",
-    descripcion: "Leads a los que ya se intentó contactar y requieren un nuevo intento.",
-    prioridad: "Prioridad estándar",
-    tono: "estandar",
-  },
-  {
-    id: "rellamadas",
-    titulo: "Rellamadas agendadas",
-    descripcion: "El cliente pidió una hora concreta. Atiéndelas antes de que venzan.",
-    prioridad: "Compromiso con el cliente",
-    tono: "cita",
-  },
-  {
-    id: "en_espera",
-    titulo: "En espera",
-    descripcion: "Devueltos por el protocolo. Todavía cumplen su intervalo y no se pueden repartir.",
-    prioridad: "Bloqueados",
-    tono: "espera",
-  },
+  cat("nuevos", { prioridad: "Prioridad alta", tono: "nuevo" }),
+  cat("pendientes_antiguos", { prioridad: "Prioridad alta", tono: "alta" }),
+  cat("rellamadas", { prioridad: "Compromiso con el cliente", tono: "cita" }),
+  cat("reintentos", { prioridad: "Prioridad estándar", tono: "estandar" }),
+  cat("en_espera", { prioridad: "Bloqueados", tono: "espera" }),
   {
     id: "asignados",
     titulo: "Ya asignados",
@@ -84,63 +62,27 @@ const GRUPOS = [
     prioridad: "En curso",
     tono: "asignado",
   },
-  // Los dos cierres van hasta abajo: ya no son trabajo por repartir, pero
+  // Los cierres van hasta abajo: ya no son trabajo por repartir, pero
   // esconderlos obligaria a salir de la pantalla para consultarlos.
-  {
-    id: "concretados",
-    titulo: "Concretados",
-    descripcion: "Terminaron en venta. Se muestran al final: ya no hay nada que repartir.",
-    prioridad: "Cerrados",
-    tono: "concretado",
-  },
-  {
-    id: "descartados",
-    titulo: "Descartados",
-    descripcion: "Se cerraron sin venta, por descarte o por agotarse el protocolo.",
-    prioridad: "Cerrados",
-    tono: "descartado",
-  },
+  cat("descartados", { prioridad: "Cerrados", tono: "descartado" }),
+  cat("concretados", { prioridad: "Cerrados", tono: "concretado" }),
 ];
 
 const POR_ID = Object.fromEntries(GRUPOS.map((g) => [g.id, g]));
 const ORDEN = GRUPOS.map((g) => g.id);
 
-// ¿Es un lead NEW?
+// A que seccion de la cola pertenece un lead: su categoria general, salvo
+// que una vendedora ya lo tenga abierto. Ahi la coordinadora no tiene nada
+// que repartir y va a "Ya asignados".
 //
-// La regla del documento, literal: entro HOY y todavia no tiene intentos.
-// Las dos condiciones importan. Solo por la fecha, un lead de hoy al que ya
-// se le marco tres veces seguiria luciendo intacto; solo por los intentos,
-// un lead de hace una semana que nadie toco se mostraria como recien
-// llegado y competiria con los frescos por la atencion. Al cambiar de dia o
-// al registrar la primera llamada, el distintivo se retira solo.
-function esNuevoDeHoy(lead, intentos, hoy) {
-  return intentos === 0 && diaLocal(lead.createdAt) === hoy;
-}
-
-// A que seccion pertenece un lead.
-//
-// `ahora` y `hoy` se pasan desde fuera para que todos los leads de una
-// misma respuesta se clasifiquen contra el mismo instante: calculado por
-// lead, un lote que tarde en procesarse podria partir el dia a la mitad.
+// El estatus se revisa ANTES que la vendedora: un lead cerrado casi
+// siempre conserva a quien lo cerro, y preguntar primero por `vendedorId`
+// llenaba "Ya asignados" de leads terminados.
 function grupoDe(lead, { intentos, ahora, hoy }) {
-  // El estatus se revisa ANTES que la vendedora. Un lead cerrado casi
-  // siempre conserva la vendedora que lo cerro, asi que preguntar primero
-  // por `vendedorId` lo mandaba a "Ya asignados" y esa seccion acababa
-  // llena de leads terminados.
-  if (lead.status === "VENTA") return "concretados";
-  if (lead.status === "DESCARTADO" || lead.status === "NO_CONCRETADO") return "descartados";
-
+  const categoria = categoriaDe(lead, { intentos, ahora, hoy });
+  if (categoria === "concretados" || categoria === "descartados") return categoria;
   if (lead.vendedorId) return "asignados";
-
-  // Una cita pactada manda sobre todo lo demas: es lo unico de esta lista
-  // que se le prometio a un cliente por telefono.
-  if (lead.status === "REAGENDADO" && lead.fechaReagenda) return "rellamadas";
-
-  if (lead.disponibleDesde && lead.disponibleDesde > ahora) return "en_espera";
-
-  if (intentos > 0) return "reintentos";
-
-  return esNuevoDeHoy(lead, intentos, hoy) ? "nuevos" : "pendientes_antiguos";
+  return categoria;
 }
 
 // El orden DENTRO de cada grupo.

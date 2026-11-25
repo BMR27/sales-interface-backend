@@ -26,6 +26,7 @@ const { MOTIVOS_REACTIVABLES, dondeReactivable, reactivar } = require("../lib/re
 const { motivoLabel } = require("../lib/motivosDescarte");
 const { describirLeads } = require("../lib/semaforoLead");
 const { dondeRepartible, dondeEnEspera } = require("../lib/colaLeads");
+const { CATEGORIAS, CATEGORIA_POR_ID, dondeCategoria } = require("../lib/categoriaLead");
 const { cronologiaDeLead } = require("../lib/cronologiaLead");
 const { emitir } = require("../lib/eventos");
 const { DIAS, validarRango, horariosDe } = require("../lib/horariosVendedora");
@@ -274,8 +275,11 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
 // GET /api/admin/leads
 router.get("/leads", async (req, res) => {
   try {
-    const { status, vendedorId, search, source, cola } = req.query;
+    const { status, vendedorId, search, source, cola, estatusTrabajo } = req.query;
     const where = { tenantId: req.user.tenantId };
+    if (estatusTrabajo && !CATEGORIA_POR_ID[estatusTrabajo]) {
+      return res.status(400).json({ error: `estatusTrabajo inválido. Valores: ${CATEGORIAS.map((c) => c.id).join(", ")}` });
+    }
 
     // Las dos mitades de la cola, que hasta ahora solo sabia separar la
     // coordinadora: el aviso del tablero decia "19 sin asignar · 34 en
@@ -317,9 +321,17 @@ router.get("/leads", async (req, res) => {
     const whereSinStatus = { ...where };
     delete whereSinStatus.status;
 
-    const [leads, porStatus, sinAsignar, enEspera] = await Promise.all([
+    // El estatus de trabajo (Nuevos, Reintentos, En hold...) se filtra igual
+    // que el estatus: sus pastillas cuentan sin su propio filtro puesto, o
+    // al elegir "Reintentos" las demas caerian a cero.
+    const ahora = new Date();
+    const whereLista = estatusTrabajo
+      ? { ...where, AND: [...(where.AND ?? []), dondeCategoria(estatusTrabajo, ahora)] }
+      : where;
+
+    const [leads, porStatus, sinAsignar, enEspera, porCategoria] = await Promise.all([
       prisma.lead.findMany({
-        where,
+        where: whereLista,
       orderBy: [
         // El orden de la lista, y es el mismo en los tres roles.
         //
@@ -351,6 +363,9 @@ router.get("/leads", async (req, res) => {
       prisma.lead.groupBy({ by: ["status"], where: whereSinStatus, _count: true }),
       prisma.lead.count({ where: dondeRepartible(req.user.tenantId) }),
       prisma.lead.count({ where: dondeEnEspera(req.user.tenantId) }),
+      Promise.all(CATEGORIAS.map((c) =>
+        prisma.lead.count({ where: { ...where, AND: [...(where.AND ?? []), dondeCategoria(c.id, ahora)] } })
+      )),
     ]);
 
     const conteos = Object.fromEntries(LEAD_STATUSES.map((s) => [s, 0]));
@@ -376,6 +391,7 @@ router.get("/leads", async (req, res) => {
         sinAsignar,
         enEspera,
       },
+      estatusTrabajo: CATEGORIAS.map((c, i) => ({ id: c.id, titulo: c.titulo, total: porCategoria[i] })),
     });
   } catch (err) {
     console.error(err);

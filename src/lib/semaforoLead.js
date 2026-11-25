@@ -12,6 +12,7 @@
 // segun quien lo mire.
 const { getParametros } = require("./parametros");
 const { situacionDe, proximaAccionDe } = require("./situacionLead");
+const { categoriaDe, CATEGORIA_POR_ID } = require("./categoriaLead");
 
 // Lo que la pantalla necesita incluir para que esto funcione.
 const SELECT_SEMAFORO = {
@@ -83,6 +84,7 @@ function relojesDe(lead, params, ahora = new Date()) {
 // trae quien llama, que es el que ya tiene las llamadas a mano.
 function describirLead(lead, { intentos = 0, ultimaLlamada = null }, params, ahora = new Date()) {
   const situacion = situacionDe(lead, ahora);
+  const categoria = categoriaDe(lead, { intentos, ahora });
   return {
     semaforo: colorDe(lead, intentos),
     // DONDE esta el lead, que es distinto de en que punto del ciclo va.
@@ -92,6 +94,14 @@ function describirLead(lead, { intentos = 0, ultimaLlamada = null }, params, aho
     // cuatro campos -- que es como cada una acababa deduciendolo distinto.
     situacion: situacion.clave,
     situacionLabel: situacion.label,
+    // No se llama `categoria`: ese campo del lead ya existe y es la del
+    // producto, y el spread de las pantallas lo pisaria.
+    // El estatus de trabajo general (Nuevos, Reintentos, En hold...): el
+    // mismo que las secciones de la cola, para que el lead se llame igual
+    // en la pantalla de la coordinadora, del admin, de la vendedora y en
+    // los reportes.
+    estatusTrabajo: categoria,
+    estatusTrabajoLabel: CATEGORIA_POR_ID[categoria].titulo,
     proximaAccionAt: proximaAccionDe(lead),
     intentos,
     ultimaLlamada,
