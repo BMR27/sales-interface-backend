@@ -1,7 +1,5 @@
 const express = require("express");
 const { apiKeyMiddleware } = require("../middleware/apiKey");
-const { getNextVendedor } = require("../lib/assignment");
-const { getParametros } = require("../lib/parametros");
 const { siguienteFolio } = require("../lib/folios");
 const { resolverProducto } = require("../lib/catalogoProducto");
 const { buscarBloqueo } = require("../lib/numeroBloqueado");
@@ -156,19 +154,13 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       return res.status(201).json({ received: true, folio, leadId: null, assignedTo: null });
     }
 
-    // Por defecto el lead entra SIN vendedora y espera en la cola del
-    // coordinador, que lo reparte a mano. El reparto automatico por turnos
-    // queda como opcion en Configuracion > Operacion.
-    const { asignacionAutomatica } = await getParametros(tenantId);
-    const vendedor = asignacionAutomatica ? await getNextVendedor(prisma, tenantId) : null;
-
-    if (asignacionAutomatica && !vendedor) {
-      await prisma.incomingLead.update({
-        where: { id: incomingLead.id },
-        data: { status: "FAILED", errorMessage: "No hay vendedores activos disponibles" },
-      });
-      return res.status(201).json({ received: true, folio, leadId: null, assignedTo: null });
-    }
+    // El lead entra SIEMPRE sin vendedora y espera en la cola. Se reparte
+    // sólo cuando la coordinadora pulsa «Ejecutar asignación» (o lo asigna a
+    // mano). Antes, con la asignación automática encendida, se le asignaba
+    // al instante a la siguiente vendedora activa a cualquier hora: un lead
+    // de las 11 de la noche caía con alguien que ya se había ido y se
+    // quedaba ahí hasta el día siguiente.
+    const vendedor = null;
 
     // El enlace con el catalogo se intentaba SOLO por internalSku, asi que
     // un lead sin SKU nacia con productoId null aunque su nombre coincidiera

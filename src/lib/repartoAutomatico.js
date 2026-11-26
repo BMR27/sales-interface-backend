@@ -27,6 +27,20 @@
 const { MATUTINO, VESPERTINO, cubreTurno, turnoActual, turnoDeHora, clasificarVendedoras } = require("./turnos");
 const { filtroDisponible } = require("./protocoloLeads");
 const { LEAD_STATUSES_ABIERTOS } = require("./leadStatus");
+const { usuariosConectados } = require("./eventos");
+
+// Las coordinadoras que se pueden sumar al reparto: activas y del
+// espacio. Las dadas de baja no aparecen ni se aceptan aunque alguien
+// mande su id.
+async function coordinadorasDelEspacio(prisma, tenantId) {
+  const conectadas = usuariosConectados(tenantId);
+  const lista = await prisma.user.findMany({
+    where: { tenantId, rol: "COORDINADOR", activo: true },
+    select: { id: true, nombre: true, rol: true },
+    orderBy: { nombre: "asc" },
+  });
+  return lista.map((c) => ({ ...c, conectada: conectadas.has(c.id) }));
+}
 
 // Reparte una lista entre varias personas, de una en una y por turnos.
 //
@@ -79,24 +93,53 @@ function intercalarPorIntentos(leads) {
 // Separar planificar de ejecutar permite enseñarle a la coordinadora qué
 // va a pasar antes de que pase, que en un reparto de 100 leads es la
 // diferencia entre una herramienta y una ruleta.
-async function planificarReparto(prisma, tenantId, fecha = new Date()) {
+//
+// `coordinadoraIds`: las coordinadoras que la persona que reparte marcó
+// para recibir leads también. Entran como una vendedora más del turno
+// -- no tienen horario de vendedora -- pero igual que ellas, sólo si
+// están conectadas.
+async function planificarReparto(prisma, tenantId, fecha = new Date(), { coordinadoraIds = [] } = {}) {
   const turno = turnoActual(fecha);
 
   const equipo = await clasificarVendedoras(prisma, tenantId, fecha);
-  const delTurno = equipo.filter((v) => cubreTurno(v.turno, turno));
+  const enTurno = equipo.filter((v) => cubreTurno(v.turno, turno));
+  // Un lead caliente no se le da a quien no está: con la aplicación
+  // cerrada no lo va a llamar, y se enfría en su lista mientras otra
+  // conectada podría estar marcándole. Sigue en turno, pero no recibe.
+  const desconectadas = enTurno.filter((v) => !v.conectada);
+  const vendedorasDelTurno = enTurno.filter((v) => v.conectada);
   const delOtroTurno = equipo.filter(
     (v) => !cubreTurno(v.turno, turno) && cubreTurno(v.turno, turno === MATUTINO ? VESPERTINO : MATUTINO)
   );
 
+  const coordinadoras = await coordinadorasDelEspacio(prisma, tenantId);
+  const pedidas = new Set(coordinadoraIds.map(Number));
+  const coordinadorasElegidas = coordinadoras.filter((c) => pedidas.has(c.id));
+  const coordinadorasQueReciben = coordinadorasElegidas.filter((c) => c.conectada);
+
+  // Quienes reciben leads en este reparto.
+  const delTurno = [...vendedorasDelTurno, ...coordinadorasQueReciben];
+
   if (delTurno.length === 0) {
     return {
       turno,
-      error: "No hay vendedoras con horario en el turno en curso",
+      error: enTurno.length > 0
+        ? "Las vendedoras del turno en curso no están conectadas. Nadie recibiría los leads."
+        : "No hay vendedoras con horario en el turno en curso",
       equipo,
+      coordinadoras,
+      desconectadas,
       asignaciones: [],
       reservados: 0,
     };
   }
+
+  // Quienes pueden recibir una rellamada que ellas generaron: cualquier
+  // vendedora activa (conectada o no) y las coordinadoras elegidas. La
+  // rellamada es un compromiso de esa persona con el cliente.
+  const puedenRecibirSuRellamada = new Map(
+    [...equipo, ...coordinadorasElegidas].map((p) => [p.id, p])
+  );
 
   // La carga viva de cada una: lo que ya tiene abierto y sin cerrar.
   const cargas = await prisma.lead.groupBy({
@@ -143,15 +186,18 @@ async function planificarReparto(prisma, tenantId, fecha = new Date()) {
       rellamadasDeOtroTurno.push(l);
       continue;
     }
+    // Se respeta a quien la generó aunque esté desconectada en este
+    // momento: el cliente espera SU llamada, a la hora que pactaron. Sólo
+    // se reparte a otra si ya no está activa.
     const original = l.reagendaVendedorSugeridoId
-      ? delTurno.find((v) => v.id === l.reagendaVendedorSugeridoId)
+      ? puedenRecibirSuRellamada.get(l.reagendaVendedorSugeridoId)
       : null;
     if (original) {
       asignaciones.push({
         leadId: l.id,
         vendedorId: original.id,
         vendedora: original.nombre,
-        motivo: "Rellamada: ella la generó y está en turno",
+        motivo: "Rellamada: se respeta a quien la generó",
       });
       cargaInicial.set(original.id, (cargaInicial.get(original.id) ?? 0) + 1);
     } else {
@@ -160,7 +206,7 @@ async function planificarReparto(prisma, tenantId, fecha = new Date()) {
   }
 
   for (const a of repartirEquitativo(rellamadasAReparir, delTurno, cargaInicial)) {
-    asignaciones.push({ ...a, motivo: "Rellamada de este turno; su vendedora no está" });
+    asignaciones.push({ ...a, motivo: "Rellamada de este turno; quien la generó ya no está activa" });
     cargaInicial.set(a.vendedorId, (cargaInicial.get(a.vendedorId) ?? 0) + 1);
   }
 
@@ -194,6 +240,11 @@ async function planificarReparto(prisma, tenantId, fecha = new Date()) {
     turno,
     equipo,
     enTurno: delTurno,
+    // Para la pantalla: a quién se podía sumar y quién quedó fuera por no
+    // estar conectada.
+    coordinadoras,
+    desconectadas,
+    coordinadorasDesconectadas: coordinadorasElegidas.filter((c) => !c.conectada),
     asignaciones,
     resumen: {
       nuevos: nuevos.length,
@@ -208,4 +259,4 @@ async function planificarReparto(prisma, tenantId, fecha = new Date()) {
   };
 }
 
-module.exports = { planificarReparto, repartirEquitativo, intercalarPorIntentos };
+module.exports = { planificarReparto, repartirEquitativo, intercalarPorIntentos, coordinadorasDelEspacio };

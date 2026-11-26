@@ -21,6 +21,7 @@
 // es del vespertino. Una vendedora de jornada completa (8 a 18) cubre los
 // dos, y así se la trata: cuenta para los dos repartos.
 const { evaluarTurno, horariosDe, momentoLocal } = require("./horariosVendedora");
+const { usuariosConectados } = require("./eventos");
 
 const MATUTINO = "MATUTINO";
 const VESPERTINO = "VESPERTINO";
@@ -92,11 +93,9 @@ async function clasificarVendedoras(prisma, tenantId, fecha = new Date()) {
     orderBy: { nombre: "asc" },
   });
 
-  const sesiones = await prisma.sesion.findMany({
-    where: { tenantId, revokedAt: null, expiresAt: { gt: new Date() } },
-    select: { userId: true },
-  });
-  const conectadas = new Set(sesiones.map((s) => s.userId));
+  // Conectada = con la aplicación abierta AHORA (canal en vivo), no con
+  // una sesión sin cerrar: ésa sigue válida horas después de que se fue.
+  const conectadas = usuariosConectados(tenantId);
 
   const out = [];
   for (const v of vendedoras) {

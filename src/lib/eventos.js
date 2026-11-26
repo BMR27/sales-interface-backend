@@ -18,8 +18,14 @@
 // tenantId -> Set de respuestas HTTP con la conexion abierta.
 const clientesPorTenant = new Map();
 
-function suscribir(tenantId, res) {
+// `userId` es de quién es la pantalla. Es la mejor señal que hay de "está
+// conectada ahora": la sesión sigue válida horas después de cerrar la
+// laptop, pero esta conexión se corta en cuanto se cierra la pestaña o el
+// equipo se duerme. El reparto la usa para no darle leads calientes a
+// quien no está (ver usuariosConectados).
+function suscribir(tenantId, res, userId = null) {
   if (!clientesPorTenant.has(tenantId)) clientesPorTenant.set(tenantId, new Set());
+  res._userId = userId;
   clientesPorTenant.get(tenantId).add(res);
 
   return () => {
@@ -53,10 +59,19 @@ function emitir(tenantId, tipo, datos = {}) {
   }
 }
 
+// Los usuarios con al menos una pantalla abierta en este momento.
+function usuariosConectados(tenantId) {
+  const ids = new Set();
+  for (const res of clientesPorTenant.get(tenantId) || []) {
+    if (res._userId) ids.add(res._userId);
+  }
+  return ids;
+}
+
 function totalConectados() {
   let total = 0;
   for (const clientes of clientesPorTenant.values()) total += clientes.size;
   return total;
 }
 
-module.exports = { suscribir, emitir, totalConectados };
+module.exports = { suscribir, emitir, totalConectados, usuariosConectados };

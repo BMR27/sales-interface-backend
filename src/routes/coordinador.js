@@ -562,9 +562,17 @@ router.get("/leads", async (req, res) => {
 // separa de ejecutar porque repartir 90 leads a ciegas es una ruleta:
 // la coordinadora tiene que poder ver a quién le toca qué antes de que
 // ocurra, y sobre todo qué NO se reparte y por qué.
+// `?coordinadoras=3,7`: las coordinadoras que también reciben leads.
+function idsDeCoordinadoras(valor) {
+  const lista = Array.isArray(valor) ? valor : String(valor || "").split(",");
+  return lista.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+}
+
 router.get("/reparto/plan", async (req, res) => {
   try {
-    const plan = await planificarReparto(prisma, req.user.tenantId);
+    const plan = await planificarReparto(prisma, req.user.tenantId, new Date(), {
+      coordinadoraIds: idsDeCoordinadoras(req.query.coordinadoras),
+    });
     res.json(plan);
   } catch (err) {
     console.error(err);
@@ -581,7 +589,9 @@ router.get("/reparto/plan", async (req, res) => {
 router.post("/reparto/ejecutar", async (req, res) => {
   try {
     const tenantId = req.user.tenantId;
-    const plan = await planificarReparto(prisma, tenantId);
+    const plan = await planificarReparto(prisma, tenantId, new Date(), {
+      coordinadoraIds: idsDeCoordinadoras(req.body?.coordinadoraIds),
+    });
     if (plan.error) return res.status(409).json({ error: plan.error });
     if (plan.asignaciones.length === 0) {
       return res.json({ ...plan, aplicadas: 0, mensaje: "No hay leads para repartir en este turno" });
@@ -590,7 +600,9 @@ router.post("/reparto/ejecutar", async (req, res) => {
     const ahora = new Date();
     const vendedoras = new Map(
       (await prisma.user.findMany({
-        where: { id: { in: [...new Set(plan.asignaciones.map((a) => a.vendedorId))] }, tenantId },
+        // `activo` otra vez: entre el plan y este punto alguien pudo ser
+        // dado de baja, y a esa persona no se le reparte nada.
+        where: { id: { in: [...new Set(plan.asignaciones.map((a) => a.vendedorId))] }, tenantId, activo: true },
         select: { id: true, nombre: true },
       })).map((v) => [v.id, v])
     );

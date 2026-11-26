@@ -11,9 +11,9 @@ const DEFINICION = {
   asignacionAutomatica: {
     tipo: "boolean",
     default: false,
-    label: "Asignar leads automáticamente",
+    label: "Reparto automático con «Ejecutar asignación»",
     ayuda:
-      "Apagado, los leads que llegan por la API entran sin vendedora y esperan en la cola del coordinador. Encendido, se reparten solos por turnos entre las vendedoras activas.",
+      "Encendido, la coordinadora ve el botón «Ejecutar asignación», que reparte la cola entre las vendedoras en turno y conectadas. Los leads nunca se asignan solos al entrar: siempre esperan en la cola hasta que alguien reparte.",
     grupo: "Asignación de leads",
   },
   // Nace encendido porque asi se comporto el sistema desde el principio:

@@ -10,13 +10,11 @@ const { siguienteFolio } = require("../lib/folios");
 // Roles que un administrador puede darle a alguien de su espacio. SUPER_ADMIN
 // queda fuera: es nivel plataforma y no se reparte desde aqui.
 const ROLES_ASIGNABLES = ["ADMIN", "ADMIN_OPERATIVO", "VENDEDOR", "COORDINADOR"];
-const { getNextVendedor } = require("../lib/assignment");
 const { parseWorkbookBuffer, validateRow, buildTemplateBuffer } = require("../lib/leadsImport");
 const { LEAD_STATUSES, LEAD_STATUSES_ABIERTOS, LEAD_STATUSES_CERRADOS_SIN_VENTA, parseLeadStatus } = require("../lib/leadStatus");
 const { inicioDeHoy, inicioDeSemana, inicioDeMes, inicioDeDia, finDeDia } = require("../lib/fechasLocales");
 const { notificarLeadsImportados } = require("../lib/notificaciones");
 const { crearAvisos } = require("../lib/avisos");
-const { getParametros } = require("../lib/parametros");
 const { detallarMovimiento } = require("../lib/auditoria");
 const { ROLES_PRESTABLES_A_ADMIN, construirVistaPrestada } = require("../lib/impersonacion");
 const crypto = require("crypto");
@@ -149,13 +147,11 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Máximo 1000 leads por carga" });
     }
 
-    // Igual que la API: sin asignacion automatica, una fila sin vendedora
-    // explicita entra a la cola en vez de repartirse sola.
-    const { asignacionAutomatica } = await getParametros(tenantId);
-
+    // Igual que la API: una fila sin vendedora explícita entra a la cola y
+    // espera a «Ejecutar asignación»; nunca se reparte sola al cargarla.
     const vendedoresCache = new Map();
     async function resolveVendedor(email) {
-      if (!email) return asignacionAutomatica ? getNextVendedor(prisma, tenantId) : null;
+      if (!email) return null;
       const key = String(email).toLowerCase();
       if (vendedoresCache.has(key)) return vendedoresCache.get(key);
       const vendedor = await prisma.user.findFirst({
@@ -183,10 +179,6 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
           fila: ref,
           error: `Vendedor '${data.vendedorEmail}' no encontrado o inactivo`,
         });
-        continue;
-      }
-      if (!vendedor && asignacionAutomatica) {
-        resultados.errores.push({ fila: ref, error: "No hay vendedores activos disponibles" });
         continue;
       }
 

@@ -31,7 +31,9 @@ router.get("/", authMiddleware, (req, res) => {
 
   res.write(`data: ${JSON.stringify({ tipo: "conectado" })}\n\n`);
 
-  const desuscribir = suscribir(req.user.tenantId, res);
+  // "Ver como" no cuenta como conectada: es el administrador mirando, no
+  // la vendedora frente a su pantalla.
+  const desuscribir = suscribir(req.user.tenantId, res, req.user.impersonatedBy ? null : req.user.id);
 
   const latido = setInterval(() => {
     try {

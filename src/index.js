@@ -62,6 +62,7 @@ const { startCierreJornadaJob } = require("./jobs/cierreJornada");
 const { startAlertaReagendasJob } = require("./jobs/alertaReagendas");
 const { startResultadosPendientesJob } = require("./jobs/resultadosPendientes");
 const { startAlertaAtrasosJob } = require("./jobs/alertaAtrasos");
+const { startDesasignarMedianocheJob } = require("./jobs/desasignarMedianoche");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -204,4 +205,5 @@ app.listen(PORT, () => {
   // Avisa a la coordinadora de los reintentos que pasaron su ventana y de
   // los leads que vencieron las 72 h sin los intentos que tocaban.
   startAlertaAtrasosJob();
+  startDesasignarMedianocheJob();
 });
