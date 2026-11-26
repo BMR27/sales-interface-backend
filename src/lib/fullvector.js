@@ -238,10 +238,18 @@ async function abrirGestionPrepago(venta, lead) {
 
     // Pagada en línea: no hay nada que cobrar, solo enviar por mensajería
     // tradicional, así que el expediente nace con el pago confirmado.
+    // Si a media llamada ya se le mandó un link que sigue vivo, al cliente
+    // ya se le ofreció cómo pagar: el expediente no nace "Por contactar".
+    const linkVivo = venta.prepagada
+      ? null
+      : await prisma.linkPago.findFirst({
+          where: { leadId: venta.leadId, estado: { in: ["ENVIADO", "PENDIENTE_PAGO"] }, smsSid: { not: null } },
+        });
     await prisma.prepagoGestion.create({
       data: {
         ventaId: venta.id,
         tenantId: venta.tenantId,
+        ...(linkVivo ? { estado: "TRANSFERENCIA_OFRECIDA" } : {}),
         ...(venta.prepagada
           ? {
               estado: "PAGO_CONFIRMADO",

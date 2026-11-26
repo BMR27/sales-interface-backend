@@ -162,6 +162,34 @@ async function brandingDelCheckout(tenantId) {
   };
 }
 
+// El expediente de prepago (ventas sin cobertura) se entera del link.
+//
+// Mandar el link ES ofrecerle al cliente cómo pagar: el expediente que
+// seguía en "Por contactar" pasa a "Transferencia ofrecida" -- antes se
+// quedaba ahí aunque el cliente ya tuviera el link en su WhatsApp, y la
+// lista mostraba como pendientes de contacto a clientes ya atendidos. Los
+// demás estados no se tocan: uno ya confirmado o enviado va más adelante.
+// La nota queda siempre, para que se vea qué se mandó y cuándo.
+async function anotarEnPrepago(leadId, { ofrecido = false, nota }) {
+  try {
+    const venta = await prisma.venta.findUnique({ where: { leadId }, select: { id: true, tenantId: true } });
+    if (!venta) return;
+    const gestion = await prisma.prepagoGestion.findUnique({ where: { ventaId: venta.id } });
+    if (!gestion) return;
+    await prisma.$transaction([
+      ...(ofrecido && gestion.estado === "PENDIENTE_CONTACTO"
+        ? [prisma.prepagoGestion.update({ where: { id: gestion.id }, data: { estado: "TRANSFERENCIA_OFRECIDA" } })]
+        : []),
+      prisma.prepagoNota.create({
+        data: { gestionId: gestion.id, nota, autorNombre: "Link de pago", tenantId: venta.tenantId },
+      }),
+    ]);
+  } catch (err) {
+    // Nunca tumba el envío del link: el cliente ya lo tiene.
+    console.error("no se pudo anotar el link en el expediente de prepago", leadId, err);
+  }
+}
+
 // El texto del SMS. Va por renglones para que se lea de un vistazo en el
 // celular: de quién es, qué paga, cuánto y dónde. Sin emojis a propósito:
 // un solo emoji parte el SMS en más segmentos y en algunos teléfonos llega
@@ -290,6 +318,10 @@ async function crearYEnviarLink({ lead, monto, user, canal = "sms" }) {
       }));
     }
     link = await prisma.linkPago.update({ where: { id: link.id }, data: { smsSid: envio.sid } });
+    await anotarEnPrepago(lead.id, {
+      ofrecido: true,
+      nota: `Link de pago enviado por ${canal === "whatsapp" ? "WhatsApp" : "SMS"} a ${lead.telefono} por ${link.enviadoPorNombre || "el sistema"}: $${monto.toLocaleString("es-MX")}.`,
+    });
   } catch (err) {
     console.error(`no se pudo mandar el link de pago por ${canal}`, link.id, err.message);
     link = await prisma.linkPago.update({
@@ -547,6 +579,14 @@ async function marcarCerrado(session, estado, desde) {
     data: { estado },
   });
   if (count > 0) emitir(link.tenantId, "pago.actualizado", { leadId: link.leadId });
+  // El expediente lo dice: hay que volver a contactar y mandar otro link.
+  if (count > 0) {
+    await anotarEnPrepago(link.leadId, {
+      nota: estado === "FALLIDO"
+        ? "La ficha OXXO / transferencia del link no se pagó a tiempo. Hay que mandarle otro link."
+        : "El link de pago venció sin que el cliente pagara. Hay que mandarle otro.",
+    });
+  }
   // La ficha venció sin pago: si la venta se cerró esperándola, se cancela.
   // Salvo que el cliente haya pagado por otro link.
   if (count > 0 && estado === "FALLIDO") {
