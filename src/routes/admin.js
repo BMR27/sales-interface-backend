@@ -66,8 +66,10 @@ router.get("/overview", async (req, res) => {
       prisma.venta.aggregate({ where: { tenantId, fecha: { gte: inicioMes } }, _sum: { monto: true, comision: true }, _count: true }),
       prisma.lead.groupBy({ by: ["status"], where: { tenantId }, _count: true }),
       prisma.lead.count({ where: { tenantId, source: "EXTERNAL_API", createdAt: { gte: inicioDia } } }),
+      // Sólo las activas, igual que el tablero de la coordinadora: el
+      // ranking es del equipo de hoy.
       prisma.user.findMany({
-        where: { rol: "VENDEDOR", tenantId },
+        where: { rol: "VENDEDOR", tenantId, activo: true },
         select: {
           id: true, nombre: true,
           _count: { select: { ventas: true } },

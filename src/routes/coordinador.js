@@ -62,7 +62,10 @@ router.get("/overview", async (req, res) => {
     const inicioDia = inicioDeHoy();
 
     const [vendedores, grouped, ventasHoy, repartibles, enEspera] = await Promise.all([
-      prisma.user.findMany({ where: { rol: "VENDEDOR", tenantId }, select: { id: true, nombre: true } }),
+      // Sólo las activas: el tablero es del equipo de hoy. Las dadas de baja
+      // (y la cuenta interna "Tienda en línea", inactiva a propósito) siguen
+      // en Ventas y en el corte de comisiones, donde su historia sí cuenta.
+      prisma.user.findMany({ where: { rol: "VENDEDOR", tenantId, activo: true }, select: { id: true, nombre: true } }),
       prisma.lead.groupBy({ by: ["vendedorId", "status"], where: { tenantId }, _count: true }),
       prisma.venta.groupBy({
         by: ["vendedorId"],
