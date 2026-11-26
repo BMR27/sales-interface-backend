@@ -64,6 +64,7 @@ const { startResultadosPendientesJob } = require("./jobs/resultadosPendientes");
 const { startAlertaAtrasosJob } = require("./jobs/alertaAtrasos");
 const { startDesasignarMedianocheJob } = require("./jobs/desasignarMedianoche");
 const { startAsignarColaJob } = require("./jobs/asignarCola");
+const { startRevisarPagosPendientesJob } = require("./lib/ventaPagoPendiente");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -208,4 +209,5 @@ app.listen(PORT, () => {
   startAlertaAtrasosJob();
   startDesasignarMedianocheJob();
   startAsignarColaJob();
+  startRevisarPagosPendientesJob();
 });

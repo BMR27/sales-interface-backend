@@ -414,6 +414,8 @@ router.get("/leads", async (req, res) => {
       // ver el ritmo del seguimiento sin abrir el historial.
       _count: { select: { llamadas: true } },
       llamadas: { orderBy: { fecha: "desc" }, take: 1, select: { fecha: true, desenlace: true, contestada: true } },
+      // Para la marca "Pago OXXO pendiente" en los concretados.
+      venta: { select: { pagoPendiente: true, pagoPendienteMetodo: true, pagoPendienteHasta: true, cancelada: true } },
     };
 
     // Lo que dice cada pestaña de estatus, se este viendo o no: es lo que

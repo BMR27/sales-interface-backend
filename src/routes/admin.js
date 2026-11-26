@@ -352,6 +352,8 @@ router.get("/leads", async (req, res) => {
           // caducar se ve igual mire quien lo mire.
           _count: { select: { llamadas: true } },
           llamadas: { orderBy: { fecha: "desc" }, take: 1, select: { fecha: true, desenlace: true, contestada: true } },
+          // Para la marca "Pago OXXO pendiente" en los concretados.
+          venta: { select: { pagoPendiente: true, pagoPendienteMetodo: true, pagoPendienteHasta: true, cancelada: true } },
         },
       }),
       prisma.lead.groupBy({ by: ["status"], where: whereSinStatus, _count: true }),

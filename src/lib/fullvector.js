@@ -273,6 +273,9 @@ async function syncVentaToFullVector(ventaId, options = {}) {
 
   const venta = await prisma.venta.findUnique({ where: { id: ventaId } });
   if (!venta || venta.fullvectorSyncStatus === "SYNCED") return;
+  // Concretada con la ficha OXXO / CLABE sin pagar: no sale hasta que pague
+  // (ver src/lib/ventaPagoPendiente.js). Ni cancelada: no hay que mandar.
+  if (venta.pagoPendiente || venta.cancelada) return;
 
   try {
     const lead = await prisma.lead.findUnique({ where: { id: venta.leadId } });

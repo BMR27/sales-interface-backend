@@ -314,6 +314,10 @@ async function aplicarCobroALaVenta(leadId) {
   try {
     const venta = await prisma.venta.findUnique({ where: { leadId } });
     if (!venta) return;
+    // El expediente de prepago es para lo que va por mensajería tradicional
+    // (sin cobertura). Con cobertura el pago queda en la venta misma
+    // (`prepagada`) y la orden sale a FullVector con $0 por cobrar.
+    if (!venta.fullvectorSinCobertura) return;
 
     const pagado = await prisma.linkPago.findFirst({
       where: { leadId, estado: "PAGADO" },
@@ -389,14 +393,18 @@ async function cobroDelLead(leadId) {
 // El error que se le muestra a la vendedora si intenta cerrar con un link
 // vivo. `null` si se puede cerrar. Sin cobertura (FC FV) no aplica: ahí no
 // hay pago contra entrega, el link vivo es justo como se cobra.
+//
+// Una ficha OXXO o una CLABE ya generadas NO bloquean: la venta se cierra
+// marcada con el pago pendiente y no sale a FullVector hasta que pague
+// (ver src/lib/ventaPagoPendiente.js). Lo único que bloquea es un link que
+// el cliente ni siquiera abrió: ahí todavía no se sabe si va a pagar en
+// línea o al recibir.
 async function bloqueoPorLinkPendiente(lead) {
   if (lead.coberturaFv === false) return null;
   const { pagado, pendientes } = await cobroDelLead(lead.id);
   if (pagado || pendientes.length === 0) return null;
-  const oxxo = pendientes.some((l) => l.estado === "PENDIENTE_PAGO");
-  return oxxo
-    ? "El cliente ya generó una ficha OXXO o una CLABE con el link y todavía no paga. Espera a que se refleje el pago, o cancela el link y pásalo a pago contra entrega."
-    : "El cliente tiene un link de pago sin pagar. Espera a que pague, o cancela el link y pásalo a pago contra entrega.";
+  if (pendientes.some((l) => l.estado === "PENDIENTE_PAGO")) return null;
+  return "El cliente tiene un link de pago que todavía no abre. Espera a que pague o genere su ficha, o cancela el link y pásalo a pago contra entrega.";
 }
 
 // Cancela los links vivos de un lead: el checkout que no se ha abierto se
@@ -454,6 +462,8 @@ async function marcarPagado(session) {
   if (count === 0) return;
 
   await aplicarCobroALaVenta(link.leadId);
+  // Una venta cerrada con la ficha pendiente sale ahora a FullVector.
+  await require("./ventaPagoPendiente").confirmarPagoDeVenta(link.leadId);
   await avisarSiHayCobroDoble(link, session);
 
   const lead = await prisma.lead.findUnique({ where: { id: link.leadId }, select: { nombre: true, vendedorId: true } });
@@ -505,12 +515,17 @@ async function avisarSiHayCobroDoble(link, session) {
 async function marcarPendiente(session) {
   const link = await prisma.linkPago.findUnique({ where: { stripeSessionId: session.id } });
   if (!link) return;
+  const metodo = await metodoDelPago(session.payment_intent);
   const { count } = await prisma.linkPago.updateMany({
     where: { id: link.id, estado: "ENVIADO" },
     data: {
       estado: "PENDIENTE_PAGO",
       stripePaymentIntentId: session.payment_intent || null,
-      metodo: await metodoDelPago(session.payment_intent),
+      metodo,
+      // Desde aquí `expiraAt` es cuándo vence la FICHA, no el checkout: es
+      // la fecha que se le muestra a la vendedora y la que marca cuándo
+      // cancelar la venta si no paga.
+      ...(metodo === "oxxo" ? { expiraAt: new Date(Date.now() + OXXO_DIAS * 24 * 60 * 60 * 1000) } : {}),
     },
   });
   if (count > 0) emitir(link.tenantId, "pago.actualizado", { leadId: link.leadId });
@@ -524,6 +539,12 @@ async function marcarCerrado(session, estado, desde) {
     data: { estado },
   });
   if (count > 0) emitir(link.tenantId, "pago.actualizado", { leadId: link.leadId });
+  // La ficha venció sin pago: si la venta se cerró esperándola, se cancela.
+  // Salvo que el cliente haya pagado por otro link.
+  if (count > 0 && estado === "FALLIDO") {
+    const pagadoPorOtro = await prisma.linkPago.findFirst({ where: { leadId: link.leadId, estado: "PAGADO" } });
+    if (!pagadoPorOtro) await require("./ventaPagoPendiente").cancelarVentaPorPagoVencido(link.leadId);
+  }
 }
 
 async function procesarEventoStripe(event) {

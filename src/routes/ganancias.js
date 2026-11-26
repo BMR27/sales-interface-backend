@@ -7,6 +7,7 @@ const { emitir } = require("../lib/eventos");
 const { getParametros } = require("../lib/parametros");
 const { crearAviso } = require("../lib/avisos");
 const { aplicarCobroALaVenta, bloqueoPorLinkPendiente, cobroDelLead } = require("../lib/linksPago");
+const { linkConFicha, datosDePagoPendiente } = require("../lib/ventaPagoPendiente");
 
 const router = express.Router();
 const prisma = require("../lib/prisma");
@@ -107,6 +108,9 @@ router.post("/venta", authMiddleware, async (req, res) => {
     const bloqueo = await bloqueoPorLinkPendiente(lead);
     if (bloqueo) return res.status(409).json({ error: bloqueo, linkPendiente: true });
     const { pagado } = await cobroDelLead(leadId);
+    // Con la ficha OXXO o la CLABE generadas y sin pagar, la venta se cierra
+    // marcada y espera al pago para salir (ver src/lib/ventaPagoPendiente.js).
+    const conFicha = pagado ? null : await linkConFicha(leadId);
 
     // La comision se calcula por bloques de piezas sobre la quincena (ver
     // src/lib/comisiones.js), no como porcentaje de esta venta: nace en 0 y
@@ -128,7 +132,9 @@ router.post("/venta", authMiddleware, async (req, res) => {
               pagoReferencia: pagado.stripePaymentIntentId || pagado.stripeSessionId,
               pagadoAt: pagado.pagadoAt || new Date(),
             }
-          : {}),
+          : conFicha
+            ? datosDePagoPendiente(conFicha)
+            : {}),
       },
     });
 
@@ -205,9 +211,12 @@ router.post("/venta", authMiddleware, async (req, res) => {
 
     emitir(req.user.tenantId, "venta.cerrada", { leadId, monto });
 
-    syncVentaToFullVector(venta.id).catch((err) => {
-      console.error("fullvector sync error, venta", venta.id, err);
-    });
+    // Con el pago pendiente no sale todavía: se manda sola cuando pague.
+    if (!venta.pagoPendiente) {
+      syncVentaToFullVector(venta.id).catch((err) => {
+        console.error("fullvector sync error, venta", venta.id, err);
+      });
+    }
 
     // Si el cliente ya pagó con el link a media llamada, la venta nace
     // pagada (ver src/lib/linksPago.js). No lanza.

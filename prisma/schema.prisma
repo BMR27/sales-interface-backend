@@ -576,6 +576,17 @@ model Venta {
   pagadoAt       DateTime?
   comprobanteUrl String?
 
+  // Concretada con el pago en camino: el cliente generó su ficha OXXO (o
+  // su CLABE SPEI) con el link y todavía no paga. No sale a FullVector
+  // hasta que el pago se confirme (entonces pasa a `prepagada`); si la
+  // ficha vence sin pago, la venta se cancela sola. Ver
+  // src/lib/ventaPagoPendiente.js.
+  pagoPendiente       Boolean   @default(false)
+  // oxxo | customer_balance (SPEI)
+  pagoPendienteMetodo String?
+  // Cuando vence la ficha OXXO. SPEI no vence del lado de Stripe: null.
+  pagoPendienteHasta  DateTime?
+
   tenantId Int
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
@@ -592,6 +603,7 @@ model Venta {
 
   prepago PrepagoGestion?
 
+  @@index([tenantId, pagoPendiente])
   @@map("ventas")
 }
 

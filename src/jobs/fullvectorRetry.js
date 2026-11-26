@@ -12,7 +12,7 @@ function startFullvectorRetryJob() {
 
   setInterval(async () => {
     const pendientes = await prisma.venta.findMany({
-      where: { fullvectorSyncStatus: "PENDING", fullvectorAttempts: { lt: MAX_ATTEMPTS } },
+      where: { fullvectorSyncStatus: "PENDING", fullvectorAttempts: { lt: MAX_ATTEMPTS }, pagoPendiente: false, cancelada: false },
       take: 20,
     });
     for (const venta of pendientes) {

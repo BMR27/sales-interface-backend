@@ -59,7 +59,7 @@ router.post("/lead/:leadId/link", authMiddleware, async (req, res) => {
     // Una venta que ya salió con cobro contra entrega no se cobra también
     // por link: el mensajero cobraría el monto completo otra vez. Sin
     // cobertura (o ya prepagada) sí: ahí el link es como se cobra.
-    if (lead.venta && !lead.venta.prepagada && !lead.venta.fullvectorSinCobertura && lead.coberturaFv !== false) {
+    if (lead.venta && !lead.venta.prepagada && !lead.venta.pagoPendiente && !lead.venta.fullvectorSinCobertura && lead.coberturaFv !== false) {
       return res.status(409).json({
         error: "Esta venta ya se registró con pago contra entrega: el mensajero va a cobrarla al entregar. Si el cliente quiere pagar en línea, hay que cancelar el cobro en FullVector primero.",
       });
