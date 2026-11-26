@@ -13,7 +13,29 @@ const DEFINICION = {
     default: false,
     label: "Reparto automático con «Ejecutar asignación»",
     ayuda:
-      "Encendido, la coordinadora ve el botón «Ejecutar asignación», que reparte la cola entre las vendedoras en turno y conectadas. Los leads nunca se asignan solos al entrar: siempre esperan en la cola hasta que alguien reparte.",
+      "Encendido, la coordinadora pulsa «Ejecutar asignación» una vez al día (desde la hora de inicio) para repartir la cola, y a partir de ese clic los leads que entran se asignan solos a las vendedoras conectadas y en horario, hasta la hora de fin. Apagado, todo se reparte a mano.",
+    grupo: "Asignación de leads",
+  },
+  // El horario de la asignación del día (ver src/lib/asignacionDelDia.js):
+  // desde "desde" se puede pulsar «Ejecutar asignación», y a partir de ese
+  // clic los leads que entran se asignan solos hasta "hasta". Horas del
+  // reloj de la operación (México); "desde" incluida, "hasta" no.
+  asignacionAutoDesde: {
+    default: 8,
+    min: 0,
+    max: 23,
+    label: "Asignación desde",
+    sufijo: "h",
+    ayuda: "Hora (0 a 23) desde la que se puede ejecutar la asignación del día.",
+    grupo: "Asignación de leads",
+  },
+  asignacionAutoHasta: {
+    default: 18,
+    min: 1,
+    max: 24,
+    label: "Asignación hasta",
+    sufijo: "h",
+    ayuda: "Hora (1 a 24) en la que los leads que entran dejan de asignarse solos y esperan al día siguiente.",
     grupo: "Asignación de leads",
   },
   // Nace encendido porque asi se comporto el sistema desde el principio:
@@ -378,6 +400,12 @@ async function setParametros(tenantId, entrada) {
       aGuardar[clave] = num;
     }
   }
+
+  // Un horario al revés apagaría la asignación sin que nadie lo note.
+  const actuales = await getParametros(tenantId);
+  const desde = aGuardar.asignacionAutoDesde ?? actuales.asignacionAutoDesde;
+  const hasta = aGuardar.asignacionAutoHasta ?? actuales.asignacionAutoHasta;
+  if (desde >= hasta) errores.push("Asignación: la hora de inicio debe ser menor que la de fin");
 
   if (errores.length > 0) return { errores };
 

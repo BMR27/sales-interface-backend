@@ -24,7 +24,7 @@
 // cada población es el de siempre -- primero el que lleva más esperando
 // -- y el candado del protocolo (`disponibleDesde`) se respeta igual que
 // en el reparto manual.
-const { MATUTINO, VESPERTINO, cubreTurno, turnoActual, turnoDeHora, clasificarVendedoras } = require("./turnos");
+const { cubreTurno, turnoActual, turnoDeHora, clasificarVendedoras } = require("./turnos");
 const { filtroDisponible } = require("./protocoloLeads");
 const { LEAD_STATUSES_ABIERTOS } = require("./leadStatus");
 const { usuariosConectados } = require("./eventos");
@@ -108,9 +108,6 @@ async function planificarReparto(prisma, tenantId, fecha = new Date(), { coordin
   // conectada podría estar marcándole. Sigue en turno, pero no recibe.
   const desconectadas = enTurno.filter((v) => !v.conectada);
   const vendedorasDelTurno = enTurno.filter((v) => v.conectada);
-  const delOtroTurno = equipo.filter(
-    (v) => !cubreTurno(v.turno, turno) && cubreTurno(v.turno, turno === MATUTINO ? VESPERTINO : MATUTINO)
-  );
 
   const coordinadoras = await coordinadorasDelEspacio(prisma, tenantId);
   const pedidas = new Set(coordinadoraIds.map(Number));
@@ -210,20 +207,14 @@ async function planificarReparto(prisma, tenantId, fecha = new Date(), { coordin
     cargaInicial.set(a.vendedorId, (cargaInicial.get(a.vendedorId) ?? 0) + 1);
   }
 
-  // --- 2. Nuevos, reservando la parte del otro turno ---
+  // --- 2. Nuevos ---
   //
-  // La proporción sale de cuánta gente cubre cada turno. Si nadie cubre
-  // el otro, no hay nada que reservar y se reparte todo.
-  const capacidadTurno = delTurno.length;
-  const capacidadOtro = delOtroTurno.length;
-  const total = capacidadTurno + capacidadOtro;
-  const paraEsteTurno =
-    capacidadOtro === 0
-      ? nuevos.length
-      : Math.ceil((nuevos.length * capacidadTurno) / total);
-
-  const nuevosAhora = nuevos.slice(0, paraEsteTurno);
-  const reservados = nuevos.length - nuevosAhora.length;
+  // Todos, sin reservar una parte para el otro turno: la asignación se
+  // ejecuta una sola vez al día y lo que entra después se asigna solo a
+  // quien esté conectada y en horario (ver src/lib/asignacionDelDia.js).
+  // Reservar dejaría esos leads en la cola sin que nadie los repartiera.
+  const nuevosAhora = nuevos;
+  const reservados = 0;
 
   for (const a of repartirEquitativo(nuevosAhora, delTurno, cargaInicial)) {
     asignaciones.push({ ...a, motivo: "Lead nuevo" });

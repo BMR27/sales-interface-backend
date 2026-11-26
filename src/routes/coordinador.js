@@ -17,6 +17,7 @@ const { emitir } = require("../lib/eventos");
 const { LEAD_STATUSES_ABIERTOS, LEAD_STATUSES_CERRADOS } = require("../lib/leadStatus");
 const { grupoDe, agrupar, esNuevoDeHoy, motivoDeAtraso } = require("../lib/colaCoordinacion");
 const { dondeCategoria } = require("../lib/categoriaLead");
+const { estadoDelDia, bloqueoParaEjecutar, registrarEjecucion } = require("../lib/asignacionDelDia");
 
 // Las pestañas de la cola que son un estatus de trabajo, en el orden en
 // que operacion las pidio.
@@ -548,6 +549,7 @@ router.get("/leads", async (req, res) => {
       // mostrar el botón "Ejecutar asignación": con la opción apagada, el
       // reparto es manual y ese botón no tendría por qué estar.
       asignacionAutomatica: params.asignacionAutomatica === true,
+      repartoDelDia: await estadoDelDia(req.user.tenantId),
       turnoActual: turnoActual(),
     });
   } catch (err) {
@@ -573,7 +575,10 @@ router.get("/reparto/plan", async (req, res) => {
     const plan = await planificarReparto(prisma, req.user.tenantId, new Date(), {
       coordinadoraIds: idsDeCoordinadoras(req.query.coordinadoras),
     });
-    res.json(plan);
+    // Si hoy ya se ejecutó o estamos fuera de horario, el plan se puede
+    // ver pero no aplicar: la pantalla lo dice en vez de dejar pulsar.
+    const estado = await estadoDelDia(req.user.tenantId);
+    res.json({ ...plan, repartoDelDia: estado, bloqueo: bloqueoParaEjecutar(estado) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
@@ -589,10 +594,18 @@ router.get("/reparto/plan", async (req, res) => {
 router.post("/reparto/ejecutar", async (req, res) => {
   try {
     const tenantId = req.user.tenantId;
-    const plan = await planificarReparto(prisma, tenantId, new Date(), {
-      coordinadoraIds: idsDeCoordinadoras(req.body?.coordinadoraIds),
-    });
+    // Una vez al día y dentro del horario (ver src/lib/asignacionDelDia.js).
+    const bloqueo = bloqueoParaEjecutar(await estadoDelDia(tenantId));
+    if (bloqueo) return res.status(409).json({ error: bloqueo });
+
+    const coordinadoraIds = idsDeCoordinadoras(req.body?.coordinadoraIds);
+    const plan = await planificarReparto(prisma, tenantId, new Date(), { coordinadoraIds });
     if (plan.error) return res.status(409).json({ error: plan.error });
+
+    // El clic del día queda registrado aunque no hubiera nada que repartir:
+    // desde aquí los leads que entren se asignan solos. Las coordinadoras
+    // que se sumaron siguen recibiendo los que entren durante el día.
+    await registrarEjecucion(tenantId, { userId: req.user.id, nombre: req.user.nombre, coordinadoraIds });
     if (plan.asignaciones.length === 0) {
       return res.json({ ...plan, aplicadas: 0, mensaje: "No hay leads para repartir en este turno" });
     }

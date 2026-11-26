@@ -29,6 +29,7 @@ const { cronologiaDeLead } = require("../lib/cronologiaLead");
 const { emitir } = require("../lib/eventos");
 const { DIAS, validarRango, horariosDe } = require("../lib/horariosVendedora");
 const { registrarAsignacion } = require("../lib/cicloLead");
+const { destinatariaParaLeadNuevo } = require("../lib/asignacionDelDia");
 const { resolverProducto } = require("../lib/catalogoProducto");
 
 const router = express.Router();
@@ -147,11 +148,12 @@ router.post("/leads/bulk", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Máximo 1000 leads por carga" });
     }
 
-    // Igual que la API: una fila sin vendedora explícita entra a la cola y
-    // espera a «Ejecutar asignación»; nunca se reparte sola al cargarla.
+    // Igual que la API: una fila sin vendedora explícita se asigna sola
+    // sólo si ya se ejecutó la asignación de hoy y estamos en horario; si
+    // no, entra a la cola.
     const vendedoresCache = new Map();
     async function resolveVendedor(email) {
-      if (!email) return null;
+      if (!email) return destinatariaParaLeadNuevo(tenantId);
       const key = String(email).toLowerCase();
       if (vendedoresCache.has(key)) return vendedoresCache.get(key);
       const vendedor = await prisma.user.findFirst({

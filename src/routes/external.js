@@ -20,6 +20,8 @@ const {
   leadStatusLabel,
 } = require("../lib/leadStatus");
 
+const { destinatariaParaLeadNuevo } = require("../lib/asignacionDelDia");
+const { registrarAsignacion } = require("../lib/cicloLead");
 const router = express.Router();
 const prisma = require("../lib/prisma");
 
@@ -154,13 +156,11 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
       return res.status(201).json({ received: true, folio, leadId: null, assignedTo: null });
     }
 
-    // El lead entra SIEMPRE sin vendedora y espera en la cola. Se reparte
-    // sólo cuando la coordinadora pulsa «Ejecutar asignación» (o lo asigna a
-    // mano). Antes, con la asignación automática encendida, se le asignaba
-    // al instante a la siguiente vendedora activa a cualquier hora: un lead
-    // de las 11 de la noche caía con alguien que ya se había ido y se
-    // quedaba ahí hasta el día siguiente.
-    const vendedor = null;
+    // Se asigna solo únicamente si la coordinadora ya ejecutó la
+    // asignación de hoy y estamos dentro del horario (8 a 18 por defecto),
+    // a una vendedora conectada y en horario. Si no, entra a la cola. Ver
+    // src/lib/asignacionDelDia.js.
+    const vendedor = await destinatariaParaLeadNuevo(tenantId);
 
     // El enlace con el catalogo se intentaba SOLO por internalSku, asi que
     // un lead sin SKU nacia con productoId null aunque su nombre coincidiera
@@ -253,6 +253,21 @@ router.post("/leads", apiKeyMiddleware, async (req, res) => {
         assignedVendedorId: vendedor?.id ?? null,
       },
     });
+
+    if (vendedor) {
+      await registrarAsignacion(prisma, {
+        leadId: lead.id,
+        tenantId,
+        actor: null,
+        anterior: null,
+        nuevo: { id: vendedor.id, nombre: vendedor.nombre },
+        evento: "asignada",
+        motivo: "Asignación automática al entrar (después de la asignación del día)",
+        automatico: true,
+        leadAntes: { ...lead, vendedorId: null },
+        leadDespues: lead,
+      });
+    }
 
     detallarMovimiento(req, {
       entidadId: lead.id,
