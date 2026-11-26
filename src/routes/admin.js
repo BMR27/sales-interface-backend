@@ -488,7 +488,9 @@ router.get("/ventas", async (req, res) => {
     // del espacio -- ahí salían admins, coordinadoras y proveedores de leads,
     // que nunca pueden aparecer en la columna Vendedor de esta tabla.
     const vendedoresDelEspacio = await prisma.user.findMany({
-      where: { tenantId: req.user.tenantId, rol: "VENDEDOR" },
+      // Sólo activas: las dadas de baja no salen en ninguna lista de
+      // personas. Sus ventas siguen en la tabla, con su nombre.
+      where: { tenantId: req.user.tenantId, rol: "VENDEDOR", activo: true },
       orderBy: { nombre: "asc" },
       select: { id: true, nombre: true, activo: true },
     });
@@ -506,7 +508,11 @@ router.get("/ventas", async (req, res) => {
     const montoGlobal = agregadoPorVendedor.reduce((s, r) => s + (r._sum.monto || 0), 0);
 
     const nombrePorId = new Map(vendedoresDelEspacio.map((v) => [v.id, v]));
+    // El desglose sólo lista al equipo activo. La participación se sigue
+    // midiendo contra el total del rango: el dinero de las dadas de baja
+    // existió, sólo no se lista a la persona.
     const porVendedor = agregadoPorVendedor
+      .filter((r) => nombrePorId.has(r.vendedorId))
       .map((r) => {
         const monto = r._sum.monto || 0;
         return {

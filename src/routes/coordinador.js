@@ -1316,8 +1316,9 @@ router.get("/comisiones", async (req, res) => {
     if (Number.isNaN(fecha.getTime())) return res.status(400).json({ error: "fecha invalida" });
 
     const params = await getParametros(tenantId);
+    // Sólo activas: las dadas de baja no salen en ninguna lista.
     const vendedoras = await prisma.user.findMany({
-      where: { tenantId, rol: "VENDEDOR" },
+      where: { tenantId, rol: "VENDEDOR", activo: true },
       select: { id: true, nombre: true, activo: true },
       orderBy: { nombre: "asc" },
     });

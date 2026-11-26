@@ -542,6 +542,12 @@ function hojaVendedoras(wb, { leads, ventas, llamadas }) {
     a.comision += v.comision || 0;
   }
 
+  // Las dadas de baja no salen en ninguna lista de personas. Sus leads y
+  // ventas siguen en las otras hojas, con su nombre.
+  const inactivas = new Set(
+    [...leads, ...llamadas, ...ventas].filter((x) => x.vendedor && x.vendedor.activo === false).map((x) => x.vendedorId)
+  );
+  for (const id of inactivas) acc.delete(id);
   const filas = [...acc.values()].sort((x, y) => y.ventas - x.ventas || y.monto - x.monto);
 
   for (const a of filas) {
@@ -605,7 +611,7 @@ router.get("/export", async (req, res) => {
           solicitudEspecial: true, nombre: true, nombreOriginal: true, telefono: true,
           shippingStreet: true, shippingNumber: true, colonia: true, municipio: true,
           state: true, zipCode: true, coberturaFv: true,
-          vendedor: { select: { nombre: true } },
+          vendedor: { select: { nombre: true, activo: true } },
           asignadoPor: { select: { nombre: true } },
           descartadoPor: { select: { nombre: true } },
           productoCatalogo: { select: { nombre: true, sku: true } },
@@ -630,7 +636,7 @@ router.get("/export", async (req, res) => {
           entregaConfirmadaAt: true, entregaConfirmadaPor: true,
           fullvectorOrderId: true, fullvectorSyncStatus: true, fullvectorSinCobertura: true,
           fullvectorError: true, vendedorId: true,
-          vendedor: { select: { nombre: true } },
+          vendedor: { select: { nombre: true, activo: true } },
           lead: {
             select: {
               folioPS: true, createdAt: true, nombre: true, telefono: true, producto: true,
@@ -648,7 +654,7 @@ router.get("/export", async (req, res) => {
         where: { tenantId, fecha: enRango },
         select: {
           contestada: true, vendedorId: true,
-          vendedor: { select: { nombre: true } },
+          vendedor: { select: { nombre: true, activo: true } },
         },
       }),
 
