@@ -304,7 +304,7 @@ const DEFINICION = {
     max: 100,
     label: "Piezas para envío gratis",
     sufijo: "piezas",
-    ayuda: "A partir de esta cantidad, el envío no se cobra.",
+    ayuda: "A partir de esta cantidad, el envío no se cobra, con o sin cobertura de FullVector.",
     grupo: "Costo de envío",
   },
   envioCostoBase: {
@@ -313,18 +313,13 @@ const DEFINICION = {
     max: 100000,
     label: "Costo de envío",
     prefijo: "$",
-    ayuda: "Se cobra cuando la compra no llega a las piezas de envío gratis.",
+    ayuda: "Se cobra cuando la compra no llega a las piezas de envío gratis, sea contra entrega o prepago, con o sin cobertura.",
     grupo: "Costo de envío",
   },
-  envioFueraCobertura: {
-    default: 190,
-    min: 0,
-    max: 100000,
-    label: "Envío fuera de cobertura",
-    prefijo: "$",
-    ayuda: "Se cobra cuando el domicilio queda fuera de la cobertura de FullVector, sin importar las piezas.",
-    grupo: "Costo de envío",
-  },
+  // Ya no hay un costo aparte para fuera de cobertura (FC): la regla de
+  // operación cobra lo mismo dentro y fuera -- $250 por debajo de 3 piezas,
+  // gratis desde 3 -- sea contra entrega o prepago. El valor guardado de
+  // `envioFueraCobertura` se queda en la base sin efecto.
 };
 
 const CLAVES = Object.keys(DEFINICION);
@@ -399,10 +394,13 @@ async function setParametros(tenantId, entrada) {
   return { valores: await getParametros(tenantId) };
 }
 
-// Misma regla de siempre, ahora leyendo los parámetros en vez de constantes.
-function calcularCostoEnvio({ cantidadTotal, cobertura }, params) {
+// La regla de operación: el envío se cobra cuando la compra no llega a las
+// piezas de envío gratis, sea contra entrega o prepago y esté el domicilio
+// dentro o fuera de cobertura. La cobertura ya no cambia el monto -- sólo
+// cambia cómo se cobra (efectivo al recibir o por adelantado).
+// `cobertura` se sigue aceptando para no romper a quien la manda.
+function calcularCostoEnvio({ cantidadTotal }, params) {
   const p = { ...valoresPorDefecto(), ...(params || {}) };
-  if (cobertura === false) return p.envioFueraCobertura;
   return cantidadTotal >= p.envioUmbralPiezas ? 0 : p.envioCostoBase;
 }
 
