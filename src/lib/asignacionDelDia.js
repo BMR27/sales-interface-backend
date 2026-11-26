@@ -98,7 +98,10 @@ async function candidatasDelMomento(tenantId, ahora = new Date()) {
 
   const equipo = await clasificarVendedoras(prisma, tenantId, ahora);
   const conectadas = usuariosConectados(tenantId);
-  const candidatas = equipo.filter((v) => v.conectada && v.enHorario).map((v) => ({ id: v.id, nombre: v.nombre }));
+  // Sin horario capturado cuenta como en horario (ver planificarReparto).
+  const candidatas = equipo
+    .filter((v) => v.conectada && (v.enHorario || v.sinHorario))
+    .map((v) => ({ id: v.id, nombre: v.nombre }));
 
   const coordIds = (estado.ejecutado.coordinadoraIds || []).filter((id) => conectadas.has(id));
   if (coordIds.length > 0) {

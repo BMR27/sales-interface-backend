@@ -102,7 +102,11 @@ async function planificarReparto(prisma, tenantId, fecha = new Date(), { coordin
   const turno = turnoActual(fecha);
 
   const equipo = await clasificarVendedoras(prisma, tenantId, fecha);
-  const enTurno = equipo.filter((v) => cubreTurno(v.turno, turno));
+  // Sin horario capturado cuenta como en turno: dejarla sin leads por un
+  // dato que nadie capturó sería peor que repartirle (es la misma regla de
+  // su lista de leads, ver src/routes/leads.js). Lo que decide si recibe
+  // es que esté conectada.
+  const enTurno = equipo.filter((v) => v.sinHorario || cubreTurno(v.turno, turno));
   // Un lead caliente no se le da a quien no está: con la aplicación
   // cerrada no lo va a llamar, y se enfría en su lista mientras otra
   // conectada podría estar marcándole. Sigue en turno, pero no recibe.
