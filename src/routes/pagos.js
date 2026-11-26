@@ -105,7 +105,17 @@ router.post("/lead/:leadId/link/cancelar", authMiddleware, async (req, res) => {
     const lead = await prisma.lead.findFirst({ where: filtroCobro(req.user, leadId), select: { id: true } });
     if (!lead) return res.status(404).json({ error: "Lead no encontrado" });
 
-    const { cancelados, noCancelados } = await cancelarLinksVivos(leadId);
+    const { cancelados, noCancelados, fichasOxxo } = await cancelarLinksVivos(leadId);
+    if (fichasOxxo.length > 0) {
+      const vence = new Date(fichasOxxo[0].vence).toLocaleDateString("es-MX", {
+        day: "2-digit", month: "short", timeZone: "America/Mexico_City",
+      });
+      return res.status(409).json({
+        error: `El cliente ya generó su ficha OXXO y Stripe no permite anularla (vence el ${vence}). No la pases a contra entrega: podría pagar la ficha y además al mensajero. Confirma la venta así: queda como «Pago OXXO pendiente», sale en cuanto pague y, si no paga antes de que venza, se cancela sola.`,
+        fichaOxxo: true,
+        cancelados,
+      });
+    }
     if (noCancelados.length > 0) {
       return res.status(409).json({
         error: "Stripe no dejó cancelar el link: el pago ya se está procesando. Espera a que se confirme antes de cerrar la venta.",

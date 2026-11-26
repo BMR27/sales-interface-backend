@@ -416,7 +416,15 @@ async function cancelarLinksVivos(leadId) {
   const stripe = getStripe();
   const { pendientes } = await cobroDelLead(leadId);
   const noCancelados = [];
+  // Fichas OXXO ya generadas: Stripe no permite anularlas (el PaymentIntent
+  // queda en requires_action hasta que el cliente paga o la ficha vence).
+  // Se reportan aparte para poder decirle a la vendedora qué hacer.
+  const fichasOxxo = [];
   for (const l of pendientes) {
+    if (l.estado === "PENDIENTE_PAGO" && l.metodo === "oxxo") {
+      fichasOxxo.push({ id: l.id, vence: l.expiraAt });
+      continue;
+    }
     try {
       if (l.estado === "ENVIADO") {
         await stripe.checkout.sessions.expire(l.stripeSessionId).catch((err) => {
@@ -436,7 +444,7 @@ async function cancelarLinksVivos(leadId) {
     }
   }
   if (pendientes.length) emitir((await prisma.lead.findUnique({ where: { id: leadId }, select: { tenantId: true } })).tenantId, "pago.actualizado", { leadId });
-  return { cancelados: pendientes.length - noCancelados.length, noCancelados };
+  return { cancelados: pendientes.length - noCancelados.length - fichasOxxo.length, noCancelados, fichasOxxo };
 }
 
 // --- Webhook -------------------------------------------------------------
