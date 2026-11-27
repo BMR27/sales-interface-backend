@@ -33,6 +33,7 @@ const { CATEGORIAS, CATEGORIA_POR_ID, categoriaDe } = require("../lib/categoriaL
 const { POR_CLAVE: MOTIVO_POR_CLAVE, motivoLabel } = require("../lib/motivosDescarte");
 const { POR_CLAVE: RESULTADO_POR_CLAVE } = require("../lib/resultadosLlamada");
 const { inicioDeDia, finDeDia, diaLocal } = require("../lib/fechasLocales");
+const { leadsPorDia } = require("../lib/leadsPorDia");
 const {
   MORADO, VERDE, ROJO,
   FMT_DINERO, FMT_FECHA, FMT_PCT,
@@ -575,6 +576,147 @@ function hojaVendedoras(wb, { leads, ventas, llamadas }) {
   rematar(sheet);
   return sheet;
 }
+
+// El periodo de un reporte, validado igual en todas las rutas. Devuelve
+// null (y ya respondió) si viene mal.
+function periodoDe(req, res) {
+  const inicio = inicioDeDia(req.query.desde);
+  const fin = finDeDia(req.query.hasta);
+  if (!inicio || !fin) {
+    res.status(400).json({ error: "Hay que indicar el periodo: desde y hasta (AAAA-MM-DD)" });
+    return null;
+  }
+  if (inicio > fin) {
+    res.status(400).json({ error: "La fecha inicial es posterior a la final" });
+    return null;
+  }
+  if (Math.round((fin - inicio) / 86400000) + 1 > MAX_DIAS) {
+    res.status(400).json({ error: `El periodo no puede pasar de ${MAX_DIAS} días` });
+    return null;
+  }
+  return { inicio, fin };
+}
+
+// GET /api/admin/reportes/leads-por-dia?desde=&hasta= — qué días de la
+// semana entran más leads (ver src/lib/leadsPorDia.js).
+router.get("/leads-por-dia", async (req, res) => {
+  try {
+    const periodo = periodoDe(req, res);
+    if (!periodo) return;
+    res.json(await leadsPorDia(req.user.tenantId, periodo.inicio, periodo.fin));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// GET /api/admin/reportes/leads-por-dia/export?desde=&hasta= — lo mismo en
+// Excel, con el detalle que en pantalla no cabe: horas, fechas y cada lead.
+router.get("/leads-por-dia/export", async (req, res) => {
+  try {
+    const periodo = periodoDe(req, res);
+    if (!periodo) return;
+    const r = await leadsPorDia(req.user.tenantId, periodo.inicio, periodo.fin, { conDetalle: true });
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "Perfect Sales";
+    wb.created = new Date();
+
+    // Hoja 1: el ranking de la pantalla, con el porqué de cada número.
+    const h1 = wb.addWorksheet("Por día de la semana");
+    h1.columns = [
+      { header: "Lugar", key: "lugar", width: 8 },
+      { header: "Día", key: "dia", width: 14 },
+      { header: "Leads", key: "leads", width: 10 },
+      { header: "% del total", key: "porcentaje", width: 12 },
+      { header: "Veces en el periodo", key: "veces", width: 18 },
+      { header: "Promedio por día", key: "promedio", width: 16 },
+      { header: "Concretados", key: "concretados", width: 13 },
+      { header: "Tasa de cierre", key: "tasaCierre", width: 14 },
+      { header: "Descartados", key: "descartados", width: 13 },
+      { header: "Abiertos", key: "abiertos", width: 10 },
+      ...r.origenes.map((o) => ({ header: `Origen: ${o}`, key: `o_${o}`, width: 14 })),
+    ];
+    r.ranking.forEach((d, i) => {
+      const fila = h1.addRow({
+        lugar: i + 1, dia: d.dia, leads: d.leads, porcentaje: d.porcentaje, veces: d.veces,
+        promedio: Math.round(d.promedio * 10) / 10, concretados: d.concretados, tasaCierre: d.tasaCierre,
+        descartados: d.descartados, abiertos: d.abiertos,
+        ...Object.fromEntries(r.origenes.map((o) => [`o_${o}`, d.origenes[o] || 0])),
+      });
+      formato(fila, ["porcentaje", "tasaCierre"], FMT_PCT);
+      if (i === 0) fila.getCell("dia").font = { bold: true, color: { argb: MORADO } };
+    });
+    const totalFila = h1.addRow({ dia: "Total", leads: r.total, porcentaje: r.total ? 1 : 0 });
+    totalFila.font = { bold: true };
+    formato(totalFila, ["porcentaje"], FMT_PCT);
+    rematar(h1);
+
+    // Hoja 2: día x hora. Dice a qué hora reforzar, no sólo qué día.
+    const h2 = wb.addWorksheet("Por hora");
+    h2.columns = [
+      { header: "Día", key: "dia", width: 12 },
+      ...Array.from({ length: 24 }, (_, h) => ({ header: `${h}h`, key: `h${h}`, width: 5 })),
+      { header: "Total", key: "total", width: 8 },
+    ];
+    for (const fila of r.porHora) {
+      h2.addRow({
+        dia: fila.dia,
+        ...Object.fromEntries(fila.horas.map((n, h) => [`h${h}`, n])),
+        total: fila.horas.reduce((a, b) => a + b, 0),
+      });
+    }
+    const porHoraTotal = Array.from({ length: 24 }, (_, h) => r.porHora.reduce((a, f) => a + f.horas[h], 0));
+    const filaTotalHora = h2.addRow({ dia: "Total", ...Object.fromEntries(porHoraTotal.map((n, h) => [`h${h}`, n])), total: r.total });
+    filaTotalHora.font = { bold: true };
+    rematar(h2, { zebra: false, filtro: false });
+    // Un solo tono de claro a oscuro: más leads, más intenso.
+    h2.addConditionalFormatting({
+      ref: `B2:Y${r.porHora.length + 1}`,
+      rules: [{ type: "colorScale", cfvo: [{ type: "min" }, { type: "max" }], color: [{ argb: "FFFFFFFF" }, { argb: MORADO }] }],
+    });
+
+    // Hoja 3: cada fecha del periodo, también las de cero.
+    const h3 = wb.addWorksheet("Por fecha");
+    h3.columns = [
+      { header: "Fecha", key: "fecha", width: 12 },
+      { header: "Día", key: "dia", width: 12 },
+      { header: "Leads", key: "leads", width: 10 },
+      { header: "Concretados", key: "concretados", width: 13 },
+    ];
+    for (const f of r.porFecha) h3.addRow({ fecha: f.fecha.split("-").reverse().join("/"), dia: f.dia, leads: f.leads, concretados: f.concretados });
+    rematar(h3);
+
+    // Hoja 4: cada lead, para filtrar a gusto.
+    const h4 = wb.addWorksheet("Detalle de leads");
+    h4.columns = [
+      { header: "Folio PS", key: "folioPS", width: 13 },
+      { header: "Folio proveedor", key: "folio", width: 16 },
+      { header: "Entró", key: "fecha", width: 17 },
+      { header: "Día", key: "dia", width: 12 },
+      { header: "Hora", key: "hora", width: 7 },
+      { header: "Origen", key: "origen", width: 10 },
+      { header: "Producto", key: "producto", width: 24 },
+      { header: "Cliente", key: "nombre", width: 26 },
+      { header: "Estatus", key: "estatus", width: 16 },
+      { header: "Vendedora", key: "vendedora", width: 22 },
+    ];
+    for (const d of r.detalle) {
+      const fila = h4.addRow(d);
+      formato(fila, ["fecha"], FMT_FECHA);
+    }
+    rematar(h4);
+
+    const nombre = `leads_por_dia_${req.query.desde}_a_${req.query.hasta}.xlsx`;
+    const buffer = await wb.xlsx.writeBuffer();
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombre}"`);
+    res.send(Buffer.from(buffer));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
 
 // GET /api/admin/reportes/export?desde=2026-11-01&hasta=2026-11-30
 router.get("/export", async (req, res) => {
