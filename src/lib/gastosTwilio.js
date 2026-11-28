@@ -12,11 +12,11 @@
 // 2026) con un margen encima -- mayor en las grabaciones --, en dólares:
 //
 //                 Twilio real      tarifa
-//   llamada       0.020 /min   ->  0.028 /min   (cobra el minuto completo)
-//   SMS           0.1819 /seg  ->  0.24 /segmento
-//   WhatsApp      0.0085 /msj  ->  0.012 /mensaje
-//   grabación     0.0025 /min  ->  0.012 /minuto grabado
-//   almacenaje    0.0005 /min  ->  0.003 /minuto guardado al mes
+//   llamada       0.020 /min   ->  0.032 /min   (cobra el minuto completo)
+//   SMS           0.1819 /seg  ->  0.28 /segmento
+//   WhatsApp      0.0085 /msj  ->  0.014 /mensaje
+//   grabación     0.0025 /min  ->  0.014 /minuto grabado
+//   almacenaje    0.0005 /min  ->  0.0035 /minuto guardado al mes
 //
 // Lo único que se mueve es el tipo de cambio, que se consulta solo una vez
 // al día (ver src/lib/tipoCambio.js).
@@ -24,11 +24,11 @@ const prisma = require("./prisma");
 const { obtenerTipoCambio } = require("./tipoCambio");
 
 const TARIFAS = Object.freeze({
-  llamadaMinutoUsd: 0.028,
-  smsSegmentoUsd: 0.24,
-  whatsappMensajeUsd: 0.012,
-  grabacionMinutoUsd: 0.012,
-  almacenamientoMinutoMesUsd: 0.003,
+  llamadaMinutoUsd: 0.032,
+  smsSegmentoUsd: 0.28,
+  whatsappMensajeUsd: 0.014,
+  grabacionMinutoUsd: 0.014,
+  almacenamientoMinutoMesUsd: 0.0035,
 });
 
 async function getTarifas() {
