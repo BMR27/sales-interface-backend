@@ -1,5 +1,6 @@
 const twilio = require("twilio");
 const { normalizePhoneNumber } = require("./twilioVoice");
+const { registrarMensaje } = require("./mensajesEnviados");
 
 // WhatsApp de la empresa por Twilio, como el SMS de twilioSms.js: sale del
 // número de Perfect Self y no del celular de la vendedora.
@@ -29,15 +30,17 @@ function conPrefijo(numero) {
 }
 
 // `variables` va por posición, como la plantilla: { 1: "...", 2: "..." }.
-async function sendTemplate(toRaw, contentSid, variables) {
+async function sendTemplate(toRaw, contentSid, variables, registro = null) {
   if (!isEnabled()) throw new Error("WhatsApp no configurado (faltan TWILIO_WHATSAPP_FROM o la plantilla)");
   const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-  return client.messages.create({
+  const mensaje = await client.messages.create({
     from: conPrefijo(process.env.TWILIO_WHATSAPP_FROM),
     to: conPrefijo(normalizePhoneNumber(toRaw)),
     contentSid,
     contentVariables: JSON.stringify(variables),
   });
+  if (registro) await registrarMensaje(mensaje, { ...registro, canal: "whatsapp" });
+  return mensaje;
 }
 
 module.exports = { isEnabled, sendTemplate };

@@ -113,6 +113,8 @@ model Tenant {
   folioContador  FolioContador?
 
   @@map("tenants")
+  recargasTwilio   RecargaTwilio[]
+  mensajesEnviados MensajeEnviado[]
 }
 
 enum TipoPersona {
@@ -1286,4 +1288,40 @@ model MemorySnapshot {
 
   @@index([createdAt])
   @@map("memory_snapshots")
+}
+
+// Recargas de saldo de Twilio, en pesos (ver src/lib/gastosTwilio.js).
+model RecargaTwilio {
+  id              Int      @id @default(autoincrement())
+  tenantId        Int
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  monto           Float
+  fecha           DateTime
+  nota            String?
+  creadoPorId     Int?
+  creadoPorNombre String?
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, fecha])
+  @@map("recargas_twilio")
+}
+
+// Cada SMS o WhatsApp enviado, para atribuir su costo (ver
+// src/lib/gastosTwilio.js). `segmentos` es lo que cobra Twilio en SMS.
+model MensajeEnviado {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  userId    Int?
+  leadId    Int?
+  // sms | whatsapp
+  canal     String
+  // link_pago | ubicacion | ticket
+  motivo    String
+  segmentos Int      @default(1)
+  twilioSid String?  @unique
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("mensajes_enviados")
 }

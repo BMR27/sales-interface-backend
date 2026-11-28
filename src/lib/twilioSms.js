@@ -1,5 +1,6 @@
 const twilio = require("twilio");
 const { normalizePhoneNumber } = require("./twilioVoice");
+const { registrarMensaje } = require("./mensajesEnviados");
 
 // Número distinto al de voz (TWILIO_CALLER_ID) -- ese no tiene SMS
 // habilitado en la cuenta (confirmado contra la API de Twilio). Mandar el
@@ -13,14 +14,18 @@ function getClient() {
   return twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 }
 
-async function sendSms(toRaw, body) {
+// `registro` ({ tenantId, userId, leadId, motivo }) deja el envío en la
+// bitácora de gasto (src/lib/mensajesEnviados.js).
+async function sendSms(toRaw, body, registro = null) {
   if (!isEnabled()) throw new Error("SMS no configurado (faltan variables TWILIO_SMS_FROM)");
   const client = getClient();
-  return client.messages.create({
+  const mensaje = await client.messages.create({
     from: process.env.TWILIO_SMS_FROM,
     to: normalizePhoneNumber(toRaw),
     body,
   });
+  if (registro) await registrarMensaje(mensaje, { ...registro, canal: "sms" });
+  return mensaje;
 }
 
 module.exports = { isEnabled, sendSms };

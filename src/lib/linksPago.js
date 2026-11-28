@@ -305,7 +305,7 @@ async function crearYEnviarLink({ lead, monto, user, canal = "sms" }) {
         2: producto,
         3: `$${monto.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
         4: codigoCorto(link.id),
-      });
+      }, { tenantId: lead.tenantId, userId: user.id, leadId: lead.id, motivo: "link_pago" });
     } else {
       if (!smsEnabled()) throw new Error("SMS no configurado");
       envio = await sendSms(lead.telefono, mensajeDelLink({
@@ -315,7 +315,7 @@ async function crearYEnviarLink({ lead, monto, user, canal = "sms" }) {
         monto,
         url: urlCorta(link.id) || session.url,
         metodos,
-      }));
+      }), { tenantId: lead.tenantId, userId: user.id, leadId: lead.id, motivo: "link_pago" });
     }
     link = await prisma.linkPago.update({ where: { id: link.id }, data: { smsSid: envio.sid } });
     await anotarEnPrepago(lead.id, {

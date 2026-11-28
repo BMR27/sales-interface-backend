@@ -167,6 +167,7 @@ app.use("/api/admin/grabaciones", grabacionesRoutes);
 app.use("/api/admin/incoming-leads", incomingLeadsRoutes);
 app.use("/api/admin/notificaciones", notificacionesRoutes);
 app.use("/api/admin/parametros", parametrosRoutes);
+app.use("/api/admin/gastos", require("./routes/gastos"));
 app.use("/api/admin/estadisticas", estadisticasRoutes);
 app.use("/api/admin/reportes", reportesRoutes);
 app.use("/api/admin/blacklist", blacklistRoutes);

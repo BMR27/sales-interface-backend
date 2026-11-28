@@ -783,7 +783,7 @@ router.post("/:id/ticket-sms", authMiddleware, async (req, res) => {
 
     const mensaje = `¡Gracias por tu compra, ${lead.nombre}! Folio: ${lead.folio ?? lead.venta.folio ?? "-"}. Producto: ${lead.producto} (x${lead.cantidad}). Total: $${lead.venta.monto + (lead.venta.costoEnvio || 0)}. En breve recibirás tu pedido.`;
 
-    await sendSms(lead.telefono, mensaje);
+    await sendSms(lead.telefono, mensaje, { tenantId: req.user.tenantId, userId: req.user.id, leadId: lead.id, motivo: "ticket" });
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -815,7 +815,7 @@ router.post("/:id/solicitar-ubicacion", authMiddleware, async (req, res) => {
 
     const link = `${process.env.FRONTEND_URL}/compartir-ubicacion/${token}`;
     const mensaje = `Hola ${lead.nombre}, para completar tu entrega compártenos tu ubicación: ${link}`;
-    await sendSms(lead.telefono, mensaje);
+    await sendSms(lead.telefono, mensaje, { tenantId: req.user.tenantId, userId: req.user.id, leadId: lead.id, motivo: "ubicacion" });
 
     res.json({ ok: true });
   } catch (err) {
