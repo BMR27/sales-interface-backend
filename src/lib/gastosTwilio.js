@@ -6,55 +6,34 @@
 // con su duración, cada SMS/WhatsApp, cada grabación -- por las tarifas
 // configuradas, y se resta de las recargas.
 //
-// Las tarifas de fábrica son las que Twilio le cobró de verdad a la cuenta
-// (consultadas contra su API en noviembre de 2026), en dólares:
+// Las tarifas son FIJAS y no se editan desde la pantalla: son el costo que
+// la empresa decidió cargar por cada acción. Parten de lo que Twilio le
+// cobró de verdad a la cuenta (consultado contra su API en noviembre de
+// 2026) con un margen encima -- mayor en las grabaciones --, en dólares:
 //
-//   llamada      0.020 por minuto   0.004 el tramo del navegador + 0.016
-//                                   la llamada a México; Twilio cobra el
-//                                   minuto completo (4 s = 1 min)
-//   SMS          0.1819 por segmento  sale de un número de EE. UU.; un SMS
-//                                   largo o con acentos son 2 o más
-//   WhatsApp     0.0085 por mensaje   plantilla de servicio
-//   grabación    0.0025 por minuto grabado
-//   almacenaje   0.0005 por minuto guardado al mes (se borran a los 15 días)
+//                 Twilio real      tarifa
+//   llamada       0.020 /min   ->  0.024 /min   (cobra el minuto completo)
+//   SMS           0.1819 /seg  ->  0.21 /segmento
+//   WhatsApp      0.0085 /msj  ->  0.010 /mensaje
+//   grabación     0.0025 /min  ->  0.005 /minuto grabado
+//   almacenaje    0.0005 /min  ->  0.001 /minuto guardado al mes
 //
-// Se guardan en dólares porque así cobra Twilio; el tipo de cambio las
-// pasa a pesos, que es como se recarga.
+// Lo único que se mueve es el tipo de cambio, que se consulta solo una vez
+// al día (ver src/lib/tipoCambio.js).
 const prisma = require("./prisma");
+const { obtenerTipoCambio } = require("./tipoCambio");
 
-const CLAVE_TARIFAS = "tarifasTwilio";
-const TARIFAS_DEFAULT = {
-  llamadaMinutoUsd: 0.02,
-  smsSegmentoUsd: 0.1819,
-  whatsappMensajeUsd: 0.0085,
-  grabacionMinutoUsd: 0.0025,
-  almacenamientoMinutoMesUsd: 0.0005,
-  tipoCambio: 18.5,
-};
+const TARIFAS = Object.freeze({
+  llamadaMinutoUsd: 0.024,
+  smsSegmentoUsd: 0.21,
+  whatsappMensajeUsd: 0.01,
+  grabacionMinutoUsd: 0.005,
+  almacenamientoMinutoMesUsd: 0.001,
+});
 
-async function getTarifas(tenantId) {
-  const fila = await prisma.appSetting.findFirst({ where: { tenantId, key: CLAVE_TARIFAS } });
-  let guardadas = {};
-  try { guardadas = fila ? JSON.parse(fila.value) : {}; } catch { guardadas = {}; }
-  return { ...TARIFAS_DEFAULT, ...guardadas };
-}
-
-async function setTarifas(tenantId, entrada) {
-  const actuales = await getTarifas(tenantId);
-  const nuevas = { ...actuales };
-  for (const k of Object.keys(TARIFAS_DEFAULT)) {
-    if (entrada[k] === undefined) continue;
-    const n = Number(entrada[k]);
-    if (!Number.isFinite(n) || n < 0 || n > (k === "tipoCambio" ? 100 : 10)) {
-      return { error: `Valor inválido para ${k}` };
-    }
-    nuevas[k] = n;
-  }
-  const valor = JSON.stringify(nuevas);
-  const fila = await prisma.appSetting.findFirst({ where: { tenantId, key: CLAVE_TARIFAS } });
-  if (fila) await prisma.appSetting.update({ where: { id: fila.id }, data: { value: valor } });
-  else await prisma.appSetting.create({ data: { tenantId, key: CLAVE_TARIFAS, value: valor } });
-  return { tarifas: nuevas };
+async function getTarifas() {
+  const tc = await obtenerTipoCambio();
+  return { ...TARIFAS, tipoCambio: tc.valor, tipoCambioInfo: tc };
 }
 
 const minutosFacturados = (seg) => (seg > 0 ? Math.ceil(seg / 60) : 0);
@@ -153,7 +132,7 @@ async function gastoEntre(tenantId, desde, hasta, tarifas, { vendedorId = null }
 // El resumen de la pantalla: gasto del periodo filtrado y el saldo
 // estimado (todas las recargas menos todo lo gastado desde la primera).
 async function resumenGastos(tenantId, { desde, hasta, vendedorId = null }) {
-  const tarifas = await getTarifas(tenantId);
+  const tarifas = await getTarifas();
   const recargas = await prisma.recargaTwilio.findMany({ where: { tenantId }, orderBy: { fecha: "desc" } });
   const aMxn = (usd) => usd * tarifas.tipoCambio;
 
@@ -223,4 +202,4 @@ async function resumenGastos(tenantId, { desde, hasta, vendedorId = null }) {
   };
 }
 
-module.exports = { TARIFAS_DEFAULT, getTarifas, setTarifas, resumenGastos, gastoEntre };
+module.exports = { TARIFAS, getTarifas, resumenGastos, gastoEntre };

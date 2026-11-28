@@ -211,4 +211,5 @@ app.listen(PORT, () => {
   startDesasignarMedianocheJob();
   startAsignarColaJob();
   startRevisarPagosPendientesJob();
+  require("./lib/tipoCambio").startTipoCambioJob();
 });

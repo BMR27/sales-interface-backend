@@ -5,7 +5,7 @@ const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const prisma = require("../lib/prisma");
 const { inicioDeDia, finDeDia } = require("../lib/fechasLocales");
-const { getTarifas, setTarifas, resumenGastos } = require("../lib/gastosTwilio");
+const { resumenGastos } = require("../lib/gastosTwilio");
 const { detallarMovimiento } = require("../lib/auditoria");
 
 const router = express.Router();
@@ -31,20 +31,6 @@ router.get("/", async (req, res) => {
       }),
     ]);
     res.json({ ...resumen, personas });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error del servidor" });
-  }
-});
-
-// PUT /api/admin/gastos/tarifas
-router.put("/tarifas", async (req, res) => {
-  try {
-    const antes = await getTarifas(req.user.tenantId);
-    const r = await setTarifas(req.user.tenantId, req.body || {});
-    if (r.error) return res.status(400).json({ error: r.error });
-    detallarMovimiento(req, { entidad: "Tarifas", descripcion: "Cambió las tarifas de Twilio", antes, despues: r.tarifas });
-    res.json(r);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error del servidor" });
