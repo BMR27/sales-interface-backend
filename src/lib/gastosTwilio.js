@@ -15,8 +15,8 @@
 //   llamada       0.020 /min   ->  0.024 /min   (cobra el minuto completo)
 //   SMS           0.1819 /seg  ->  0.21 /segmento
 //   WhatsApp      0.0085 /msj  ->  0.010 /mensaje
-//   grabación     0.0025 /min  ->  0.005 /minuto grabado
-//   almacenaje    0.0005 /min  ->  0.001 /minuto guardado al mes
+//   grabación     0.0025 /min  ->  0.010 /minuto grabado
+//   almacenaje    0.0005 /min  ->  0.0025 /minuto guardado al mes
 //
 // Lo único que se mueve es el tipo de cambio, que se consulta solo una vez
 // al día (ver src/lib/tipoCambio.js).
@@ -27,8 +27,8 @@ const TARIFAS = Object.freeze({
   llamadaMinutoUsd: 0.024,
   smsSegmentoUsd: 0.21,
   whatsappMensajeUsd: 0.01,
-  grabacionMinutoUsd: 0.005,
-  almacenamientoMinutoMesUsd: 0.001,
+  grabacionMinutoUsd: 0.01,
+  almacenamientoMinutoMesUsd: 0.0025,
 });
 
 async function getTarifas() {
